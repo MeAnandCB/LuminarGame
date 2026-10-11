@@ -96,6 +96,33 @@ export function useConfirm() {
   return { node, ask: (title: string, body: ReactNode, label: string, run: () => void, danger = false) => setState({ title, body, label, run, danger }) };
 }
 
+/** Counts up/down to the new value and flashes when it changes. */
+export function AnimatedNumber({ value }: { value: number }) {
+  const [shown, setShown] = useState(value);
+  const [bump, setBump] = useState(0);
+  const from = useRef(value);
+  useEffect(() => {
+    const start = from.current;
+    if (start === value) return;
+    setBump((n) => n + 1);
+    const t0 = performance.now();
+    let raf = 0;
+    const tick = (t: number) => {
+      const k = Math.min(1, (t - t0) / 700);
+      const v = Math.round(start + (value - start) * (1 - Math.pow(1 - k, 3)));
+      setShown(v);
+      if (k < 1) raf = requestAnimationFrame(tick);
+      else from.current = value;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      from.current = value;
+    };
+  }, [value]);
+  return <span key={bump} className={bump ? 'bump inline-block' : 'inline-block'}>{shown}</span>;
+}
+
 export function RankMark({ rank }: { rank: number }) {
   return <span className="tnum inline-block min-w-[2.2ch] text-right font-black">{rank > 0 ? rank : '–'}</span>;
 }
@@ -105,7 +132,7 @@ export function Vitals({ row }: { row: LeaderboardRow }) {
     <>
       {row.lives !== null && (
         <span className="ml-2 whitespace-nowrap text-[0.85em]" aria-label={row.eliminated ? 'eliminated' : `${row.lives} lives left`}>
-          {row.eliminated ? <span className="badge badge-bad">OUT</span> : <span className="text-bad" aria-hidden="true">{'♥'.repeat(Math.max(0, row.lives))}</span>}
+          {row.eliminated ? <span className="badge badge-bad">OUT</span> : <span className="beat text-bad" aria-hidden="true">{'♥'.repeat(Math.max(0, row.lives))}</span>}
         </span>
       )}
       {row.streak >= 2 && !row.eliminated && (
@@ -134,8 +161,8 @@ export function Leaderboard({ rows, provisional, hidden, highlightId, compact, s
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.teamId} className={`${r.teamId === highlightId ? 'outline outline-2 outline-neon' : ''} bg-panel2/80 ${r.eliminated ? 'opacity-60' : ''}`}>
+          {rows.map((r, i) => (
+            <tr key={r.teamId} style={{ animationDelay: `${Math.min(i, 12) * 40}ms` }} className={`row-in ${!hidden && r.rank >= 1 && r.rank <= 3 ? `rank-${r.rank}` : ''} ${r.teamId === highlightId ? 'outline outline-2 outline-neon' : ''} bg-panel2/80 ${r.eliminated ? 'opacity-60' : ''}`}>
               <td className="rounded-l-xl px-3 py-2 text-neon">{hidden ? '' : <RankMark rank={r.rank} />}</td>
               <td className="w-full max-w-0 truncate px-2 py-2 font-semibold">
                 <span className={r.eliminated ? 'line-through' : ''}>{r.name}</span>
@@ -147,7 +174,7 @@ export function Leaderboard({ rows, provisional, hidden, highlightId, compact, s
                   <span className="tnum text-[0.8em] text-muted">{r.progressTotal ? `${r.progress}/${r.progressTotal}` : ''}</span>
                 </td>
               )}
-              <td className="tnum px-2 py-2 text-right font-black">{hidden ? '•••' : r.total}</td>
+              <td className="tnum px-2 py-2 text-right font-black">{hidden ? '•••' : <AnimatedNumber value={r.total} />}</td>
               <td className="rounded-r-xl px-3 py-2 text-right">
                 {r.qualified === true && <span className="badge badge-ok">✔ Finalist</span>}
                 {r.qualified === false && <span className="badge">Out</span>}

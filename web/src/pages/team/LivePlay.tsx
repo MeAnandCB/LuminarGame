@@ -5,6 +5,7 @@ import { fmtClock, type Live } from '../../lib/realtime';
 import { submitAnswer } from '../../lib/submit';
 import { ErrorBanner, Spinner } from '../../components/ui';
 import { OptionButtons } from '../../components/OptionButtons';
+import { Emblem } from '../../components/Backdrop';
 
 const NAME: Record<number, string> = { 2: 'Reel Rush', 3: 'Final Showdown' };
 
@@ -15,14 +16,14 @@ export function LivePlay({ team, pub, round, live, now, paused }: { team: TeamSt
 
   const hearts = me.lives !== null && (
     <span aria-label={`${me.lives} lives left`} className="text-lg text-bad">
-      <span aria-hidden="true">{'♥'.repeat(Math.max(0, me.lives))}<span className="text-line">{'♥'.repeat(Math.max(0, 3 - me.lives))}</span></span>
+      <span aria-hidden="true"><span className="beat">{'♥'.repeat(Math.max(0, me.lives))}</span><span className="text-line">{'♥'.repeat(Math.max(0, 3 - me.lives))}</span></span>
     </span>
   );
 
   if (me.eliminated) {
     return (
       <section data-level={round.level} className="panel pop border-bad p-6 text-center" aria-label="Eliminated">
-        <p className="text-4xl" aria-hidden="true">💔</p>
+        <p className="break text-6xl" aria-hidden="true">💔</p>
         <h2 className="text-2xl font-black">You are out of the Showdown</h2>
         <p className="mt-2 text-muted">Your points stay on the board. Watch the big screen for the finish!</p>
         {q && <p className="mt-3 text-sm">Question {q.index + 1} of {q.total}</p>}
@@ -36,12 +37,12 @@ export function LivePlay({ team, pub, round, live, now, paused }: { team: TeamSt
       <div className="panel px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-[var(--accent)]">Level {round.level} · {NAME[round.level] ?? 'Live'}</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-[var(--accent)]"><Emblem level={round.level} />Level {round.level} · {NAME[round.level] ?? 'Live'}</p>
             <p className="font-bold">Question {q.index + 1} of {q.total}</p>
           </div>
           <div className="flex flex-col items-end gap-1">
             {hearts}
-            {me.streak >= 2 && <span className="badge badge-warn" aria-label={`Streak of ${me.streak}`}><span aria-hidden="true">🔥</span> streak {me.streak}</span>}
+            {me.streak >= 2 && <span className="badge badge-warn beat" aria-label={`Streak of ${me.streak}`}><span aria-hidden="true">🔥</span> streak {me.streak}</span>}
           </div>
         </div>
         <PhaseBar q={q} now={now} paused={paused} />
@@ -70,10 +71,10 @@ function PhaseBar({ q, now, paused }: { q: LivePublic; now: number; paused: bool
     <div className="mt-2">
       <div className="flex items-baseline justify-between text-sm">
         <span className="text-muted">{q.phase === 'open' ? 'Time to answer' : 'Next question in'}</span>
-        <span role="timer" aria-label={`${Math.ceil(left / 1000)} seconds`} className={`mono text-2xl font-black ${urgent ? 'text-bad' : ''}`}>{fmtClock(left)}</span>
+        <span role="timer" aria-label={`${Math.ceil(left / 1000)} seconds`} className={`mono text-2xl font-black ${urgent ? 'urgent text-bad' : ''}`}>{fmtClock(left)}</span>
       </div>
       <div className="mt-1 h-2 overflow-hidden rounded-full bg-panel2" aria-hidden="true">
-        <div className={`h-full ${urgent ? 'bg-bad' : 'bg-[var(--accent)]'}`} style={{ width: `${pct}%`, transition: 'width 0.3s linear' }} />
+        <div className={`h-full shadow-[0_0_12px_var(--accent)] ${urgent ? 'bg-bad' : 'bg-[var(--accent)]'}`} style={{ width: `${pct}%`, transition: 'width 0.3s linear' }} />
       </div>
     </div>
   );
@@ -111,7 +112,7 @@ function Open({ q, team, live, now }: { q: LivePublic; team: TeamState; live: Li
 
   return (
     <>
-      <article className="panel glow p-4">
+      <article key={q.index} className="panel glow pop p-4">
         <h2 className="text-lg font-black text-[var(--accent)]">{q.title}</h2>
         <p className="prompt mt-2 text-base">{q.prompt}</p>
         <p className="mt-3 text-xs text-muted">Worth {q.points} points + speed bonus · one answer, final</p>
@@ -122,7 +123,7 @@ function Open({ q, team, live, now }: { q: LivePublic; team: TeamState; live: Li
       )}
       {locked ? (
         <div role="status" aria-live="polite" className="panel pop border-neon p-5 text-center">
-          <p className="text-3xl" aria-hidden="true">🔒</p>
+          <p className="lock-in text-5xl" aria-hidden="true">🔒</p>
           <p className="text-xl font-black">Answer locked in{chosen.current ? `: ${q.options.find((o) => o.id === chosen.current)?.text ?? chosen.current}` : ''}</p>
           <p className="text-muted">{result?.message.includes('DOUBLE') ? '🔥 Double Down is on! ' : ''}Results appear when the question closes.</p>
           <p className="mt-2 text-sm text-muted">{q.answered} of {q.eligible} teams locked in</p>
@@ -140,7 +141,7 @@ function Open({ q, team, live, now }: { q: LivePublic; team: TeamState; live: Li
             </div>
           )}
           {me.doubleAvailable && (
-            <label className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 px-4 py-3 ${double ? 'border-warn bg-[#3b2a05]' : 'border-line'}`}>
+            <label className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 px-4 py-3 transition ${double ? 'pulse border-warn bg-[#3b2a05]' : 'border-line'}`}>
               <input type="checkbox" className="h-6 w-6" checked={double} onChange={(e) => setDouble(e.target.checked)} />
               <span>
                 <strong>🔥 Double Down</strong> <span className="text-sm text-muted">(one per game)</span>
@@ -164,7 +165,7 @@ function Reveal({ q, team }: { q: LivePublic; team: TeamState }) {
   const tone = !res ? '' : res.outcome === 'correct' ? 'border-ok bg-[#052e16]' : res.outcome === 'incorrect' ? 'border-bad bg-[#3b0a1c]' : 'border-line bg-panel2';
   return (
     <>
-      <div role="status" aria-live="polite" className={`pop rounded-xl border-2 p-4 ${tone}`}>
+      <div role="status" aria-live="polite" className={`${res?.outcome === 'correct' ? 'res-correct' : res?.outcome === 'incorrect' ? 'res-wrong' : 'pop'} rounded-xl border-2 p-4 ${tone}`}>
         {res ? (
           <>
             <p className="text-2xl font-black">
@@ -194,7 +195,7 @@ function Reveal({ q, team }: { q: LivePublic; team: TeamState }) {
           {r.eliminated.length > 0 && <p className="mt-1 text-bad">💔 Eliminated: {r.eliminated.join(', ')}</p>}
         </div>
       )}
-      {me.streak >= 2 && <p className="text-center font-bold text-warn"><span aria-hidden="true">🔥</span> {me.streak} in a row!</p>}
+      {me.streak >= 2 && <p className="text-center font-bold text-warn"><span className="beat" aria-hidden="true">🔥</span> {me.streak} in a row!</p>}
     </>
   );
 }

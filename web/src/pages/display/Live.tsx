@@ -1,5 +1,6 @@
 import type { LeaderboardRow, LiveOption, LivePublic, PublicState } from '../../../../shared/types';
 import { Leaderboard } from '../../components/ui';
+import { Emblem } from '../../components/Backdrop';
 
 const TILE = ['border-[#38bdf8] bg-[#0c2a3d]', 'border-[#f472b6] bg-[#3b0f2a]', 'border-[#fbbf24] bg-[#3b2a05]', 'border-[#4ade80] bg-[#0b2e1a]'];
 const SHAPE = ['▲', '◆', '●', '■'];
@@ -16,7 +17,7 @@ function Ring({ q, now, paused }: { q: LivePublic; now: number; paused: boolean 
         <circle cx="60" cy="60" r={R} fill="none" stroke="rgb(44 56 112)" strokeWidth="9" />
         <circle cx="60" cy="60" r={R} fill="none" stroke={urgent ? '#fb7185' : paused ? '#fbbf24' : 'var(--accent)'} strokeWidth="9" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={C * (1 - frac)} style={{ transition: 'stroke-dashoffset .3s linear' }} />
       </svg>
-      <span className={`mono text-[clamp(1.6rem,3.6vw,4.4rem)] font-black ${urgent ? 'text-bad' : ''}`}>{Math.ceil(left / 1000)}</span>
+      <span className={`mono text-[clamp(1.6rem,3.6vw,4.4rem)] font-black ${urgent ? 'urgent text-bad' : ''}`}>{Math.ceil(left / 1000)}</span>
     </div>
   );
 }
@@ -24,7 +25,7 @@ function Ring({ q, now, paused }: { q: LivePublic; now: number; paused: boolean 
 function Tile({ o, i, reveal }: { o: LiveOption; i: number; reveal: boolean }) {
   const dim = reveal && !o.correct;
   return (
-    <li className={`relative flex items-center gap-[1vw] overflow-hidden rounded-2xl border-2 px-[1vw] py-[0.6vw] ${TILE[i % 4]} ${dim ? 'opacity-40' : ''} ${reveal && o.correct ? 'glow !border-ok' : ''}`}>
+    <li style={{ animationDelay: `${i * 90}ms` }} className={`tile-in relative flex items-center gap-[1vw] overflow-hidden rounded-2xl border-2 px-[1vw] py-[0.6vw] ${TILE[i % 4]} ${dim ? 'tile-wrong opacity-40' : ''} ${reveal && o.correct ? 'tile-correct !border-ok' : ''}`}>
       <span aria-hidden="true" className="text-[1.5em]">{SHAPE[i % 4]}</span>
       <span className="mono grid h-[2.4em] w-[2.4em] shrink-0 place-items-center rounded-lg border border-current text-[0.9em] font-black">{o.id.toUpperCase()}</span>
       <span className="flex-1 text-[1.2em] font-bold leading-tight">{o.text}</span>
@@ -53,14 +54,14 @@ export function LiveView({ pub, now }: { pub: PublicState; now: number }) {
           <Ring q={q} now={now} paused={paused} />
           <div className="min-w-0 flex-1">
             <p className="text-[0.8em] font-bold uppercase tracking-[0.25em] text-[var(--accent)]">
-              Level {round.level} · {round.kind === 'lightning' ? 'Reel Rush' : 'Final Showdown'} · Question {q.index + 1}/{q.total}
+              <Emblem level={round.level} />Level {round.level} · {round.kind === 'lightning' ? 'Reel Rush' : 'Final Showdown'} · Question {q.index + 1}/{q.total}
             </p>
             <p className="text-[0.95em] text-muted">
               {paused ? '⏸ PAUSED by the host' : q.phase === 'open' ? `${q.answered} of ${q.eligible} teams locked in` : r?.voided ? 'Question skipped' : 'Reveal'}
             </p>
           </div>
         </div>
-        <article className="panel glow p-[1.2vw]">
+        <article key={q.index} className="panel glow pop p-[1.2vw]">
           <h2 className="text-[0.9em] font-bold uppercase tracking-widest text-muted">{q.title} · {q.points} pts</h2>
           <p className="mt-[0.4vw] text-[clamp(1.2rem,2.3vw,2.9rem)] font-black leading-tight">{q.prompt}</p>
         </article>
@@ -70,7 +71,7 @@ export function LiveView({ pub, now }: { pub: PublicState; now: number }) {
           </ol>
         )}
         {r && (
-          <div className="pop panel border-ok px-[1.2vw] py-[0.8vw]" role="status" aria-live="polite">
+          <div className="res-correct panel border-ok px-[1.2vw] py-[0.8vw]" role="status" aria-live="polite">
             <p className="text-[0.75em] font-bold uppercase tracking-widest text-muted">Correct answer</p>
             <p className="text-[1.7em] font-black leading-tight text-ok">{r.correctText}</p>
             <div className="mt-[0.3vw] flex flex-wrap gap-x-[2vw] gap-y-1 text-[0.95em] font-bold">
@@ -96,7 +97,7 @@ export function LiveView({ pub, now }: { pub: PublicState; now: number }) {
         {pub.recent.length > 0 && (
           <ul className="mt-1 space-y-0.5 text-[0.85em]" aria-label="Recent score changes">
             {pub.recent.slice(0, 3).map((c) => (
-              <li key={c.id} className="flex justify-between gap-3"><span className="truncate">{c.teamName}</span><span className={`tnum font-black ${c.points >= 0 ? 'text-ok' : 'text-bad'}`}>{c.points >= 0 ? '▲ +' : '▼ '}{c.points}</span></li>
+              <li key={c.id} className="slide-in flex justify-between gap-3"><span className="truncate">{c.teamName}</span><span className={`tnum font-black ${c.points >= 0 ? 'text-ok' : 'text-bad'}`}>{c.points >= 0 ? '▲ +' : '▼ '}{c.points}</span></li>
             ))}
           </ul>
         )}

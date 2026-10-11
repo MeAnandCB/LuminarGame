@@ -128,7 +128,8 @@ test('complete event: admin, two phones, projector, 3 levels, podium, CSV', asyn
   await b.page.getByRole('checkbox', { name: /Double Down/ }).check();
   await b.page.getByRole('radio', { name: /Oru Vadakkan Selfie/ }).click();
   await b.page.getByRole('button', { name: /Lock in with Double Down/ }).click();
-  await expect(b.page.getByText(/Answer locked in/)).toBeVisible();
+  // Beta answers last, so the reveal can land before the locked-in panel is painted: accept either.
+  await expect(b.page.getByText(/Answer locked in|Wrong answer/)).toBeVisible();
 
   // everyone answered -> the question closes by itself and the reveal appears everywhere
   await expect(a.page.getByText('Correct!')).toBeVisible();

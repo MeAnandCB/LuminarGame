@@ -7,6 +7,8 @@ import { submitAnswer } from '../lib/submit';
 import { ConnBadge, ErrorBanner, Leaderboard, Spinner } from '../components/ui';
 import { LivePlay } from './team/LivePlay';
 import { OptionButtons } from '../components/OptionButtons';
+import { Backdrop, Emblem, LEVELS, LevelIntro, themeFor } from '../components/Backdrop';
+import { AnimatedNumber } from '../components/ui';
 
 type Boot = 'loading' | 'anon' | 'in';
 
@@ -42,15 +44,21 @@ export function TeamApp() {
   return <Session initial={initial!} onLost={lost} />;
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, state, level }: { children: React.ReactNode; state?: string; level?: number }) {
+  const inRound = state === 'ROUND_READY' || state === 'ROUND_RUNNING' || state === 'ROUND_PAUSED' || state === 'ROUND_ENDED';
+  const lv = state === 'QUALIFICATION' || state === 'EVENT_COMPLETED' ? 3 : level;
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col gap-4 px-4 py-5">
+    <>
+    <Backdrop theme={themeFor(state, inRound ? lv : undefined)} />
+    {inRound && <LevelIntro level={lv} />}
+    <main data-level={inRound || state === 'QUALIFICATION' || state === 'EVENT_COMPLETED' ? lv : undefined} className="stage mx-auto flex min-h-screen w-full max-w-xl flex-col gap-4 px-4 py-5">
       <header className="flex items-center gap-2">
-        <span aria-hidden="true" className="grid h-9 w-9 place-items-center rounded-lg bg-panel2 font-black text-neon">B</span>
+        <span aria-hidden="true" className="logo-b grid h-9 w-9 place-items-center rounded-lg bg-panel2 font-black text-neon">B</span>
         <h1 className="text-lg font-black tracking-wide">BRAINBYTE <span className="text-violet">ARENA</span></h1>
       </header>
       {children}
     </main>
+    </>
   );
 }
 
@@ -155,7 +163,7 @@ function Session({ initial, onLost }: { initial: TeamState; onLost: (m: string) 
   }, [live.status, onLost]);
 
   return (
-    <Shell>
+    <Shell state={team.eventState} level={pub?.round?.level}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-xl font-black leading-tight">{team.team.name}</p>
@@ -192,7 +200,7 @@ function ScoreStrip({ team }: { team: TeamState }) {
 const Stat = ({ label, value, small }: { label: string; value: string; small?: boolean }) => (
   <div className="panel px-2 py-2">
     <div className="text-xs font-semibold uppercase tracking-wider text-muted">{label}</div>
-    <div className={`tnum font-black ${small ? 'text-base leading-7' : 'text-2xl'}`}>{value}</div>
+    <div className={`tnum font-black ${small ? 'text-base leading-7' : 'text-2xl'}`}>{/^\d+$/.test(value) ? <AnimatedNumber value={Number(value)} /> : value}</div>
   </div>
 );
 
@@ -205,10 +213,10 @@ function Screen({ team, pub, live, now }: { team: TeamState; pub: PublicState | 
 
   if (st === 'SETUP' || st === 'REGISTRATION_OPEN' || st === 'LOBBY') {
     return (
-      <Card title={st === 'LOBBY' ? "You're in the lobby" : 'Registered!'} icon="🛰️">
+      <Card title={st === 'LOBBY' ? "You're in the lobby" : 'Registered!'} icon="🛰️" spin>
         <p>{st === 'LOBBY' ? 'Registration is closed. Stay on this screen – the host will start Level 1 soon.' : 'Waiting for the host to close registration.'}</p>
         <p className="mt-3 text-muted">{pub ? `${pub.counts.teams} team(s) registered · ${pub.counts.connected} connected` : ''}</p>
-        <div className="mt-4 rounded-xl border border-line bg-ink p-4 text-center">
+        <div className="pop mt-4 rounded-xl border border-line bg-ink p-4 text-center">
           <p className="text-sm text-muted">Need a second phone? Open this site there, choose “add this phone” and enter your team code:</p>
           <p className="mono mt-2 text-3xl font-black tracking-[0.25em] text-neon" aria-label={`Team code ${team.team.code.split('').join(' ')}`}>{team.team.code}</p>
         </div>
@@ -244,7 +252,7 @@ function Screen({ team, pub, live, now }: { team: TeamState; pub: PublicState | 
           <li>{round.total} questions · {round.kind === 'quiz' ? `${Math.round(round.durationMs / 60000)} minutes, at your own pace` : 'live - everyone answers the same question together'}</li>
           <li>Both teammates can read the screen – only one phone needs to answer.</li>
         </ul>
-        <p className="mt-4 font-bold text-neon">Waiting for the host to press start…</p>
+        <p className="float-dots mt-4 font-bold text-neon">Waiting for the host to press start</p>
       </Card>
     );
   }
@@ -260,10 +268,11 @@ function Screen({ team, pub, live, now }: { team: TeamState; pub: PublicState | 
   return <Between team={team} pub={pub} />;
 }
 
-function Card({ title, icon, children, level }: { title: string; icon: string; children: React.ReactNode; level?: number }) {
+function Card({ title, icon, children, level, spin }: { title: string; icon: string; children: React.ReactNode; level?: number; spin?: boolean }) {
   return (
-    <section data-level={level} className="panel pop p-5" aria-labelledby="card-h">
-      <h2 id="card-h" className="mb-3 text-2xl font-black"><span aria-hidden="true">{icon} </span>{title}</h2>
+    <section data-level={level} className={`panel pop p-5 ${level ? 'glow' : ''}`} aria-labelledby="card-h">
+      <h2 id="card-h" className="mb-3 text-2xl font-black">{level ? <Emblem level={level} /> : <span aria-hidden="true" className={spin ? 'crown' : ''}>{icon} </span>}{title}</h2>
+      {level && LEVELS[level] && <p className="-mt-2 mb-3 text-sm italic text-muted">{LEVELS[level]!.tag}</p>}
       {children}
     </section>
   );
@@ -357,16 +366,16 @@ function Play({ team, round, live, now, paused }: { team: TeamState; round: NonN
     <section data-level={round.level} className="flex flex-col gap-3" aria-label="Current question">
       <div className="panel flex items-center justify-between gap-3 px-4 py-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-widest text-[var(--accent)]">Level {round.level} · Quick Brain</p>
+          <p className="text-xs font-bold uppercase tracking-widest text-[var(--accent)]"><Emblem level={round.level} />Level {round.level} · Quick Brain</p>
           <p className="font-bold">Question {ch.position + 1} of {ch.total}</p>
         </div>
         <div className="text-right" role="timer" aria-label={`Time remaining ${fmtClock(left)}`}>
-          <p className={`mono text-3xl font-black ${left < 30000 && !paused ? 'text-bad' : 'text-text'}`}>{fmtClock(left)}</p>
+          <p className={`mono text-3xl font-black ${left < 30000 && !paused ? 'urgent text-bad' : 'text-text'}`}>{fmtClock(left)}</p>
           <p className="text-xs text-muted">{paused ? 'PAUSED' : 'remaining'}</p>
         </div>
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-panel2" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Round progress">
-        <div className="h-full bg-[var(--accent)] transition-[width]" style={{ width: `${pct}%` }} />
+        <div className="h-full bg-gradient-to-r from-[var(--accent)] to-[var(--accent2,var(--accent))] shadow-[0_0_12px_var(--accent)] transition-[width] duration-700" style={{ width: `${pct}%` }} />
       </div>
 
       {paused ? (
@@ -378,7 +387,7 @@ function Play({ team, round, live, now, paused }: { team: TeamState; round: NonN
       ) : (
         <>
           {result && (
-            <div role="status" aria-live="polite" className={`pop rounded-xl border-2 px-4 py-3 font-semibold ${OUTCOME_UI[result.outcome].cls}`}>
+            <div role="status" aria-live="polite" className={`${result.outcome === 'correct' ? 'res-correct' : result.outcome === 'incorrect' ? 'res-wrong' : 'pop'} rounded-xl border-2 px-4 py-3 font-semibold ${OUTCOME_UI[result.outcome].cls}`}>
               <span aria-hidden="true">{OUTCOME_UI[result.outcome].icon} </span>
               <span className="sr-only">{OUTCOME_UI[result.outcome].label}: </span>
               {result.message}
@@ -386,7 +395,7 @@ function Play({ team, round, live, now, paused }: { team: TeamState; round: NonN
             </div>
           )}
           {error && <ErrorBanner>{error}</ErrorBanner>}
-          <article className="panel glow p-4">
+          <article key={ch.id} className="panel glow pop p-4">
             <h2 className="text-lg font-black text-[var(--accent)]">{ch.title}</h2>
             <p className="prompt mt-2 text-base">{ch.prompt}</p>
             <p className="mt-3 text-xs text-muted">Worth {ch.points} points · one answer only</p>
@@ -478,8 +487,8 @@ function Between({ team, pub }: { team: TeamState; pub: PublicState | null }) {
 function Final({ team, pub }: { team: TeamState; pub: PublicState | null }) {
   return (
     <>
-      <Card title="Final results" icon="🏆">
-        <p className="text-3xl font-black text-neon">{team.award}</p>
+      <Card title="Final results" icon="🏆" spin>
+        <p className="champ-reveal shimmer-gold text-3xl font-black" style={{ animationDelay: '0.3s' }}>{team.award}</p>
         <p className="mt-1 text-lg">You finished <strong>#{team.rank ?? '–'}</strong> with <strong className="tnum">{team.score.total}</strong> points.</p>
       </Card>
       {pub?.podium && (
