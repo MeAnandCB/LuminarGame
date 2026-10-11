@@ -100,6 +100,23 @@ export function RankMark({ rank }: { rank: number }) {
   return <span className="tnum inline-block min-w-[2.2ch] text-right font-black">{rank > 0 ? rank : '–'}</span>;
 }
 
+export function Vitals({ row }: { row: LeaderboardRow }) {
+  return (
+    <>
+      {row.lives !== null && (
+        <span className="ml-2 whitespace-nowrap text-[0.85em]" aria-label={row.eliminated ? 'eliminated' : `${row.lives} lives left`}>
+          {row.eliminated ? <span className="badge badge-bad">OUT</span> : <span className="text-bad" aria-hidden="true">{'♥'.repeat(Math.max(0, row.lives))}</span>}
+        </span>
+      )}
+      {row.streak >= 2 && !row.eliminated && (
+        <span className="ml-2 whitespace-nowrap text-[0.85em] font-bold text-warn" aria-label={`streak of ${row.streak}`}>
+          <span aria-hidden="true">🔥{row.streak}</span>
+        </span>
+      )}
+    </>
+  );
+}
+
 export function Leaderboard({ rows, provisional, hidden, highlightId, compact, showProgress, big, hideOffline, dense }: { rows: LeaderboardRow[]; provisional?: boolean; hidden?: boolean; highlightId?: number; compact?: boolean; showProgress?: boolean; big?: boolean; hideOffline?: boolean; dense?: boolean }) {
   if (rows.length === 0) return <Empty>No teams yet.</Empty>;
   const text = dense ? 'text-[clamp(0.85rem,1.3vw,1.4rem)] [&_td]:!py-1' : big ? 'text-[clamp(1rem,1.9vw,1.9rem)]' : compact ? 'text-sm' : 'text-base';
@@ -118,11 +135,12 @@ export function Leaderboard({ rows, provisional, hidden, highlightId, compact, s
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.teamId} className={`${r.teamId === highlightId ? 'outline outline-2 outline-neon' : ''} bg-panel2/80`}>
+            <tr key={r.teamId} className={`${r.teamId === highlightId ? 'outline outline-2 outline-neon' : ''} bg-panel2/80 ${r.eliminated ? 'opacity-60' : ''}`}>
               <td className="rounded-l-xl px-3 py-2 text-neon">{hidden ? '' : <RankMark rank={r.rank} />}</td>
               <td className="w-full max-w-0 truncate px-2 py-2 font-semibold">
-                {r.name}
-                {r.tied && !hidden && <span className="badge badge-warn ml-2" title="Tied on every criterion; ordered by team id">tie</span>}
+                <span className={r.eliminated ? 'line-through' : ''}>{r.name}</span>
+                <Vitals row={r} />
+                {r.tied && !hidden && !big && !dense && <span className="badge badge-warn ml-2" title="Tied on every criterion; ordered by team id">tie</span>}
               </td>
               {showProgress && (
                 <td className="hidden whitespace-nowrap px-2 py-2 sm:table-cell">

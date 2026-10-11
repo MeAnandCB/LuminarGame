@@ -7,10 +7,25 @@ export function migrate(db: Db): number[] {
   const applied: number[] = [];
   for (const m of MIGRATIONS) {
     if (done.has(m.id)) continue;
-    db.tx(() => {
-      db.exec(m.sql);
-      db.run('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)', m.id, m.name, new Date().toISOString());
-    });
+    const run = () =>
+      db.tx(() => {
+        db.exec(m.sql);
+        if (m.foreignKeysOff) {
+          const broken = db.all('PRAGMA foreign_key_check');
+          if (broken.length) throw new Error(`Migration ${m.id} would break foreign keys`);
+        }
+        db.run('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)', m.id, m.name, new Date().toISOString());
+      });
+    if (m.foreignKeysOff) {
+      db.exec('PRAGMA foreign_keys = OFF');
+      try {
+        run();
+      } finally {
+        db.exec('PRAGMA foreign_keys = ON');
+      }
+    } else {
+      run();
+    }
     applied.push(m.id);
   }
   return applied;

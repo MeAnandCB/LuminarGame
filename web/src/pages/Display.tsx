@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { LeaderboardRow, PublicState } from '../../../shared/types';
 import { fmtClock, remaining, useLive, useServerNow } from '../lib/realtime';
 import { ConnBadge, Leaderboard, QrImage, Spinner } from '../components/ui';
+import { LiveView } from './display/Live';
 
 export function DisplayApp() {
   const live = useLive('display');
@@ -69,7 +70,9 @@ function Body({ pub, now }: { pub: PublicState; now: number }) {
     case 'EVENT_COMPLETED':
       return <Champions pub={pub} />;
     default:
-      return round ? <RoundView pub={pub} now={now} /> : <Message title="Stand by" body="" />;
+      if (!round) return <Message title="Stand by" body="" />;
+      if (pub.live && (ev.state === 'ROUND_RUNNING' || ev.state === 'ROUND_PAUSED')) return <LiveView pub={pub} now={now} />;
+      return <RoundView pub={pub} now={now} />;
   }
 }
 
@@ -150,7 +153,7 @@ function RoundView({ pub, now }: { pub: PublicState; now: number }) {
   const ready = state === 'ROUND_READY';
   const paused = state === 'ROUND_PAUSED';
   const ended = state === 'ROUND_ENDED';
-  const unit = round.level === 1 ? 'questions' : 'stages';
+  const unit = 'questions';
   const eligible = round.level === 3 ? pub.leaderboard.filter((r) => r.qualified) : pub.leaderboard;
   return (
     <div className="grid flex-1 grid-cols-1 gap-[1.6vw] lg:grid-cols-[minmax(0,4fr)_minmax(0,7fr)]">

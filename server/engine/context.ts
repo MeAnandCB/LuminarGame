@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { Db } from '../db/connection.js';
 import type { Announcement } from '../../shared/contract.js';
-import type { EventSettings, EventState, RoundConfig, RoundStatus, TeamStatus } from '../../shared/types.js';
+import type { EventSettings, EventState, RoundConfig, RoundKind, RoundStatus, TeamStatus } from '../../shared/types.js';
 import type { TimerState } from '../game/timer.js';
 
 export class AppError extends Error {
@@ -38,7 +38,7 @@ export interface RoundRow {
   event_id: number;
   level: number;
   name: string;
-  kind: 'quiz' | 'puzzle';
+  kind: RoundKind;
   status: RoundStatus;
   config: string;
   instructions: string;
@@ -48,6 +48,11 @@ export interface RoundRow {
   heartbeat_at: number | null;
   ended_at: number | null;
   answers_revealed: number;
+  live_index: number;
+  live_phase: 'open' | 'reveal' | null;
+  live_clock_start: number;
+  /** Round clock when the current question first opened (the speed bonus is measured from here). */
+  live_q_start: number;
 }
 
 export interface ChallengeRow {

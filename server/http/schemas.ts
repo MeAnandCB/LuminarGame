@@ -29,6 +29,12 @@ export const answerSchema = z.object({
   requestId: z.string().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/),
   answer: z.string().max(MAX_ANSWER_LENGTH),
   challengeId: z.number().int().positive().optional(),
+  doubleDown: z.boolean().optional(),
+});
+
+export const skipSchema = z.object({
+  requestId: z.string().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/),
+  challengeId: z.number().int().positive().optional(),
 });
 
 export const loginSchema = z.object({ username: z.string().min(1).max(64), password: z.string().min(1).max(200) });
@@ -58,14 +64,22 @@ export const scoreSchema = z.object({
 
 export const configPatchSchema = z
   .object({
-    durationSec: z.number().int().min(30).max(7200),
-    speedBonusMax: z.number().int().min(0).max(20),
+    durationSec: z.number().int().min(30).max(14400),
+    speedBonusMax: z.number().int().min(0).max(500),
     speedWindowSec: z.number().int().min(1).max(600),
-    timeBonusMax: z.number().int().min(0).max(1000),
-    completionBonus: z.number().int().min(0).max(5000),
     wrongPenalty: z.number().int().min(0).max(500),
     hintsEnabled: z.boolean(),
     hintPenalty: z.number().int().min(0).max(1000),
+    allowSkip: z.boolean(),
+    questionSec: z.number().int().min(5).max(120),
+    revealSec: z.number().int().min(2).max(60),
+    fastestBonus: z.number().int().min(0).max(500),
+    streakBonus: z.number().int().min(0).max(200),
+    streakCap: z.number().int().min(0).max(20),
+    doubleDown: z.boolean(),
+    lives: z.number().int().min(0).max(10),
+    stealPoints: z.number().int().min(0).max(1000),
+    survivorBonus: z.number().int().min(0).max(5000),
   })
   .partial()
   .strict();

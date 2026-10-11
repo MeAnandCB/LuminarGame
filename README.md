@@ -1,6 +1,6 @@
 # BRAINBYTE ARENA
 
-A real-time, local-network multiplayer quiz/puzzle competition for a live tech-student event: 20 teams of 2, one phone per team, one host laptop, one projector. Everything runs from a single Node process and a single SQLite file. **No internet is needed during the event** (no CDNs, no remote fonts, no cloud services).
+A real-time, local-network multiplayer Kerala-film quiz competition for a live student event: 20 teams of 2, one phone per team, one host laptop, one projector. Everything runs from a single Node process and a single SQLite file. **No internet is needed during the event** (no CDNs, no remote fonts, no cloud services).
 
 | View | URL | Who |
 | --- | --- | --- |
@@ -8,7 +8,7 @@ A real-time, local-network multiplayer quiz/puzzle competition for a live tech-s
 | Projector | `http://<laptop-ip>:3000/display` | audience, read-only, no login |
 | Admin | `http://<laptop-ip>:3000/admin` | host, password protected |
 
-The game: **Level 1 Quick Brain** (12 timed questions, one answer each) → **Level 2 Codebreaker** (5 chained cipher stages) → qualification (top *N* teams, default 5) → **Level 3 The Final Hack** (4 chained stages, finalists only) → podium.
+The game, three different formats about Malayalam cinema: **Level 1 Quick Brain** (self-paced quiz, with a Skip button) → **Level 2 Reel Rush** (live, host-paced: speed, streaks, Double Down) → qualification (top *N* teams, default 5) → **Level 3 Final Showdown** (finalists only: lives, steals, last team standing) → podium.
 
 ---
 
@@ -85,17 +85,18 @@ Configuration (`.env`, never commit it): `PORT`, `HOST`, `DB_PATH`, `PUBLIC_URL`
 
 If the server or laptop crashes mid-round: restart `npm start`. All scores, sessions and progress are on disk. A round that was running comes back **paused with exactly the time that was left** (±1 s heartbeat); press *Resume*. Phones reconnect by themselves.
 
-## 5. Game rules as implemented
+## 5. The three games
 
-| | Level 1 – Quick Brain | Level 2 – Codebreaker | Level 3 – The Final Hack |
+| | **Level 1 – Quick Brain** | **Level 2 – Reel Rush** | **Level 3 – Final Showdown** |
 | --- | --- | --- | --- |
-| Content | 12 Kerala / Malayalam film questions (choice + numeric) | Binary reel code → Poster alphabet shift → Box-office number lock → Caesar → Final vault | Atbash cipher (film title) → Logic grid (3 film posters) → Hidden pattern (acrostic) → Final vault |
-| Pacing | Each team works through the questions at its own speed; **one answer per question**, wrong answers still use the question | Stages unlock one at a time, **unlimited tries**, wrong answers never advance | same as Level 2, finalists only |
-| Points | 100/question (+ speed bonus 0–20, default 10, decays over a configurable window) | 200 / 200 / 200 / 300 / 500 (+ time bonus ≤ 200, proportional to round time left) | 300 / 300 / 300 / 400 + completion bonus 500 + time bonus ≤ 200 |
-| Hints | off | on, −50 once per stage | on, −100 once per stage |
-| Wrong penalty | 0 (configurable) | 0 (configurable) | 0 (configurable) |
+| Who plays | every team | every team | finalists only |
+| Format | 12 questions (choice + numeric), **self-paced**, one answer per question, whole-round timer (10 min) | 12 **live** questions: everyone sees the same question at once on a 20 s timer, then a 7 s reveal; the game moves on by itself | 10 **live** questions (25 s + 8 s reveal), harder |
+| Points | 100 per question + speed bonus 0–20 (default 10) | 100 per question + speed bonus up to 100 + **fastest finger** 50 + **streak** 25 per consecutive correct answer (cap ×4) | 200 per question + speed up to 150 + **fastest finger** 100 |
+| Twist | **Skip button**: a team may skip a question (no points, no penalty) | **Double Down** (once per team): right = double points, wrong = lose the base points | **3 lives**: a wrong or missing answer costs a life, 0 lives = eliminated. The fastest correct team **steals 75** from the top-scoring team that just slipped. **Last team standing** wins; every team still alive at the end gets a 300 survivor bonus. If everyone would be knocked out at once, nobody is. |
+| Host controls | pause / resume / end | pause / resume / end, **Close question now / Next question**, **Skip (void) question** | same as Reel Rush |
+| Everything above is configurable in the admin dashboard (Rounds & scoring), until the round starts. | | | |
 
-Final vault passwords are derived from earlier answers (L2: *stage 4 word* `-` *stage 3 number* *stage 1 letter* = `BALAN-42M`; L3: *hidden word* `-` *logic code* `-` *first 3 letters of the cipher word* = `MOHANLAL-231-PRE`). The vault is never solvable by guessing the earlier stages out of order. The stage texts explain the construction.
+How a live question works: it is **open** (answers are locked in but *not scored* and correctness is not revealed) → **reveal** (the question is resolved in one transaction: correct answer, answer distribution, bonuses, streaks, lives, steals) → the next question opens automatically. The question closes early when every team still playing has answered. Phases run on the round's pause-safe clock, so pausing freezes the question timer. Skipping *voids* the question (nobody scores, no life lost). Level 1's **Skip** is per team and idempotent; the host can switch it off.
 
 **Answer normalisation** (server side only): Unicode NFKC, trim, collapse whitespace, case-fold. Punctuation and inner characters are preserved (`BALAN-42M` ≠ `BALAN42M`). Numeric answers parse strictly (`42`, `42.0`, `042` match; `4 2`, `1e1` do not). Multiple-choice compares option ids. Alternatives can be listed in a challenge's `answers` array.
 
@@ -110,13 +111,15 @@ Final vault passwords are derived from earlier answers (L2: *stage 4 word* `-` *
 ```
 shared/    types + socket event contract used by both sides
 server/
-  game/    pure logic: normalize, scoring, timer, stateMachine, ranking   (unit tested)
-  engine/  context (db, clock, audit), events (state machine + rounds), teams, play (submit/hint),
+  game/    pure logic: normalize, scoring, timer, stateMachine, ranking, liveRules   (unit tested)
+  games/   one module per game format: quiz.ts (Level 1), live.ts (Levels 2 and 3: phase machine,
+           scoring resolution, host controls, views), index.ts (dispatches by round kind)
+  engine/  context (db, clock, audit), events (state machine + rounds), teams,
            admin (adjustments, config, CSV), standings, views (per-audience snapshots)
   http/    express app, auth (scrypt), middleware (CSRF, origin, rate limit), schemas (zod)
   realtime/ socket.io auth, coalesced broadcasts, ticker
   db/      node:sqlite wrapper, migrations
-  content/ seeded questions/stages (+ cipher generators)
+  content/ seeded Kerala-film questions: quiz.ts, lightning.ts, showdown.ts
 web/       React + Vite + Tailwind: Team, Display, Admin
 tests/     unit/, integration/ (Vitest, real server + sockets), e2e/ (Playwright)
 scripts/   admin, migrate, seed, backup, loadtest, dev, e2e-server
@@ -134,7 +137,7 @@ Extra guards live in the engine: Level 3 can only be prepared from QUALIFICATION
 
 **Real-time contract** (`shared/contract.ts`). Server → client: `state:public` (projector + phones: no answers, no private data), `team:state` (only that team's room), `admin:state` (admin room, includes answer keys), `timer:sync`, `announce`, `session:ended`. Client → server (with acks): `answer:submit`, `hint:request`. Sockets authenticate in the handshake (`display` = public/read-only; `team` and `admin` require their HttpOnly cookie) and every handler re-checks the live session. Admin *commands* use authenticated REST (`/api/admin/*`) so they get CSRF protection and are trivially testable; the same submission service backs both `POST /api/team/answer` and the socket event, and a phone falls back to HTTP with the *same request id* if the socket acknowledgement times out. Broadcasts are coalesced (60 ms) so a burst of 20 answers produces one snapshot per audience.
 
-**Database** (`server/db/migrations.ts`, SQLite, WAL, foreign keys on): `events`, `admin_users`, `admin_sessions`, `rounds`, `challenges` (Level 1 questions *and* Level 2/3 puzzle stages, ordered), `teams`, `team_sessions`, `team_stage_progress`, `hints_used`, `answer_submissions`, `score_ledger`, `event_state_history`, `audit_logs`, `leaderboard_snapshots` (official standings written when each round ends and when the event completes). Integrity is enforced by the database itself: unique room PIN, partial unique index on active team names, unique `(team, request_id)`, partial unique index allowing only one *correct* submission per team and challenge, and a unique `idempotency_key` on every ledger row. **Scores are never stored; they are `SUM(score_ledger.points)`.** All timestamps are UTC (ISO text, plus epoch ms for timing).
+**Database** (`server/db/migrations.ts`, SQLite, WAL, foreign keys on): `events`, `admin_users`, `admin_sessions`, `rounds`, `challenges` (the ordered questions of every round), `teams`, `team_sessions`, `team_stage_progress` (quiz position), `live_team_state` (streak, lives, Double Down), `live_question_log`, `hints_used`, `answer_submissions`, `score_ledger`, `event_state_history`, `audit_logs`, `leaderboard_snapshots` (official standings written when each round ends and when the event completes). Integrity is enforced by the database itself: unique room PIN, partial unique index on active team names, unique `(team, request_id)`, partial unique index allowing only one *correct* submission per team and challenge (live questions also enforce one locked answer in code), and a unique `idempotency_key` on every ledger row. **Scores are never stored; they are `SUM(score_ledger.points)`.** All timestamps are UTC (ISO text, plus epoch ms for timing).
 
 **Main HTTP endpoints:** `POST /api/team/join|link|answer|hint|logout`, `GET /api/team/me`, `GET /api/public/state|event`, `POST /api/admin/login|logout`, `GET /api/admin/state|export.csv`, `POST /api/admin/event|event/reset|event/complete|registration/*|round/*|qualification/open|teams/:id/status|teams/:id/score`, `PATCH /api/admin/event|round/:level/config|challenges/:id`.
 
@@ -151,15 +154,15 @@ Extra guards live in the engine: Level 3 can only be prepared from QUALIFICATION
 
 ```bash
 npm run typecheck && npm run lint
-npm test                 # 93 tests: 31 unit + 62 integration
+npm test                 # 121 tests: 41 unit + 80 integration
 npm run build && npm run test:e2e   # 3 Playwright journeys in Chromium
 ```
 
-Last full run on macOS (Node 26.5): **93/93 Vitest tests pass, 3/3 Playwright tests pass, typecheck and lint clean.**
+Last full run on macOS (Node 26.5): **121/121 Vitest tests pass, 3/3 Playwright tests pass, typecheck and lint clean.**
 
-* **Unit** (`tests/unit`): normalisation, alternatives, numeric parsing, speed/time bonus, config validation, timer pause/resume/deadline, ranking and every tie-break step, finalist selection, state machine, and independent re-derivation of every seeded puzzle answer (including brute-forcing that the logic grid has exactly one solution).
-* **Integration** (`tests/integration`, real HTTP server + Socket.IO + SQLite): admin auth/CSRF/origin/logout/rate limit; socket authorisation; no answer-key leakage; registration limits, duplicate and near-duplicate names, concurrent joins (26 → exactly 20), registration closing mid-join; Level 1/2 scoring, retries, duplicates, concurrent submissions, deadline (inclusive), ticker expiry, repeated pause/resume, hints charged once, stage skipping/replay, two devices on one team; qualification, freezing and reopening, tie at the cutoff, finalist-only Level 3, podium, CSV and ledger = snapshot = displayed totals; admin adjustments, reset, audit log; DB write failure rolls back and the same request id can be retried; server restart mid-round (paused, remaining time intact), restart after completion; 20 simultaneous socket submissions.
-* **E2E** (`tests/e2e`): the full event through the real UI (admin login → create → registration → 2 phones → projector updates → Level 1 → Level 2 progression, wrong code, single advance → qualification → Level 3 → podium/champion → CSV equals leaderboard → audit log); offline/online reconnection and page refresh; responsive checks (320, 375, 768, 1280, 1920 px, 20 teams, no horizontal overflow, projector fits 20 rows without scrolling), touch target size, keyboard selection, reduced motion, and **axe-core WCAG 2.1 A/AA scans** on join, team play, projector (registration and live) and admin.
+* **Unit** (`tests/unit`): normalisation, alternatives, numeric parsing, speed bonus, config validation, timer pause/resume/deadline, ranking and every tie-break step, finalist selection, state machine, **every live scoring rule** (speed, fastest finger, streaks, Double Down, lives, steals, elimination, sudden-death protection) and the seeded Kerala-film answer keys.
+* **Integration** (`tests/integration`, real HTTP server + Socket.IO + SQLite): admin auth/CSRF/origin/logout/rate limit; socket authorisation; no answer-key leakage; registration limits, duplicate and near-duplicate names, concurrent joins (26 → exactly 20), registration closing mid-join; Level 1 scoring, **Skip**, hints, retries, duplicates, concurrent submissions, deadline (inclusive), ticker expiry, repeated pause/resume; **Reel Rush and Final Showdown** (hidden-until-reveal scoring, early close, Double Down, streaks, host advance/skip, pause freezing the question timer, lives/elimination/steals/survivor bonus, restart mid-question, sockets); upgrading a version-1 database in place; qualification, freezing and reopening, tie at the cutoff, finalist-only Level 3, podium, CSV and ledger = snapshot = displayed totals; admin adjustments, reset, audit log; DB write failure rolls back and the same request id can be retried; server restart mid-round (paused, remaining time intact), restart after completion; 20 simultaneous socket submissions.
+* **E2E** (`tests/e2e`): the full event through the real UI (admin login → create → registration → 2 phones → projector updates → Level 1 incl. Skip → live Reel Rush with Double Down, host skip and reveal → qualification → Final Showdown with a steal, lives and an elimination → podium/champion → CSV equals leaderboard → audit log); offline/online reconnection and page refresh; responsive checks (320, 375, 768, 1280, 1920 px, 20 teams, no horizontal overflow, projector fits 20 rows without scrolling), touch target size, keyboard selection, reduced motion, and **axe-core WCAG 2.1 A/AA scans** on join, team play, projector (registration and live) and admin.
 
 **Not verified:** real phones (iOS Safari / Android Chrome) on a physical Wi-Fi network, Windows and Linux hosts, and a real projector. Phone behaviour was tested with Chromium mobile emulation only.
 
@@ -180,8 +183,8 @@ It registers 20 teams, connects 20 sockets plus a projector, and fires all 20 an
 ## 11. Known limitations
 
 * One active event at a time (previous events are archived in the database, not browsable in the UI).
-* Question/answer text is seeded from `server/content/seed.ts`; the dashboard edits points, hints and scoring but not prompts or answer keys. To change content, edit the seed file and create a new event.
+* Question/answer text is seeded from `server/content/` (`quiz.ts`, `lightning.ts`, `showdown.ts`); the dashboard edits points, hints and scoring but not prompts or answer keys. To change content, edit those files, `npm run build`, restart and create a new event. Events created by an older version of the game (with the earlier puzzle rounds) cannot be started; create a new event.
 * Levels are fixed at 1 → 2 → qualification → 3, with a 20-team cap; qualification happens after Level 2.
-* Level 1 is self-paced per team (not host-paced question by question); the projector therefore shows round instructions, progress and standings, not a single shared question.
+* Level 1 is self-paced per team, so the projector shows instructions, progress and standings rather than a shared question; Levels 2 and 3 are live and fully shown on the projector.
 * After a server restart a running round always returns *paused* and needs a host *Resume*. The remaining time is accurate to the 1 s heartbeat.
 * In-memory rate limiting resets on restart. Plain HTTP on the LAN (see §7).

@@ -9,7 +9,8 @@ import { migrate } from '../db/migrate.js';
 import { Ctx, systemClock, type AppConfig, type Clock } from '../engine/context.js';
 import * as events from '../engine/events.js';
 import * as teams from '../engine/teams.js';
-import * as play from '../engine/play.js';
+import * as play from '../games/index.js';
+import * as live from '../games/live.js';
 import * as admin from '../engine/admin.js';
 import { adminState, publicState, teamState } from '../engine/views.js';
 import * as auth from './auth.js';
@@ -136,6 +137,11 @@ export function createApp(opts: AppOptions): AppHandle {
     const s = req.teamSession!;
     res.json(play.submitAnswer(ctx, { teamId: s.team.id, sessionId: s.sessionId, ...body }));
   });
+  api.post('/team/skip', needTeam, limit(rl.answer, (r) => `t${r.teamSession!.team.id}`), (req, res) => {
+    const body = S.skipSchema.parse(req.body);
+    const s = req.teamSession!;
+    res.json(play.skipQuestion(ctx, { teamId: s.team.id, sessionId: s.sessionId, ...body }));
+  });
   api.post('/team/hint', needTeam, limit(rl.hint, (r) => `t${r.teamSession!.team.id}`), (req, res) => {
     res.json(play.requestHint(ctx, req.teamSession!.team.id));
   });
@@ -232,6 +238,14 @@ export function createApp(opts: AppOptions): AppHandle {
   });
   adm.post('/round/end', (req, res) => {
     events.endRound(ctx, actor(req));
+    ok(res);
+  });
+  adm.post('/round/live/advance', (req, res) => {
+    live.hostAdvance(ctx, actor(req));
+    ok(res);
+  });
+  adm.post('/round/live/skip', (req, res) => {
+    live.hostSkip(ctx, actor(req));
     ok(res);
   });
   adm.post('/round/:level/reveal', (req, res) => {

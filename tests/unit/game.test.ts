@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { checkAnswer, normalizeText, parseNumber } from '../../server/game/normalize.js';
-import { speedBonus, timeBonus, parseRoundConfig, DEFAULT_ROUND_CONFIG } from '../../server/game/scoring.js';
+import { speedBonus, parseRoundConfig, DEFAULT_ROUND_CONFIG } from '../../server/game/scoring.js';
 import { acceptsSubmissions, elapsedClock, pauseTimer, remainingAt, resumeTimer, startTimer } from '../../server/game/timer.js';
 import { rankTeams, selectFinalists, type RankInput } from '../../server/game/ranking.js';
 import { InvalidTransitionError, TRANSITIONS, assertTransition, canTransition } from '../../server/game/stateMachine.js';
@@ -44,17 +44,14 @@ describe('scoring', () => {
     expect(speedBonus(20, 30_000, 99_000)).toBe(0);
     expect(speedBonus(0, 30_000, 0)).toBe(0);
   });
-  it('time bonus is proportional to the time left', () => {
-    expect(timeBonus(200, 900_000, 900_000)).toBe(200);
-    expect(timeBonus(200, 900_000, 450_000)).toBe(100);
-    expect(timeBonus(200, 900_000, 0)).toBe(0);
-    expect(timeBonus(200, 900_000, -5)).toBe(0);
-  });
   it('rejects invalid configuration', () => {
-    expect(() => parseRoundConfig({ ...DEFAULT_ROUND_CONFIG[1], speedBonusMax: 99 })).toThrow();
-    expect(() => parseRoundConfig({ ...DEFAULT_ROUND_CONFIG[1], durationSec: 1 })).toThrow();
-    expect(() => parseRoundConfig({ ...DEFAULT_ROUND_CONFIG[2], hintPenalty: -5 })).toThrow();
-    expect(parseRoundConfig(DEFAULT_ROUND_CONFIG[3]).completionBonus).toBe(500);
+    expect(() => parseRoundConfig('quiz', { ...DEFAULT_ROUND_CONFIG.quiz, speedBonusMax: 99 })).toThrow(); // quiz bonus is capped at 20
+    expect(() => parseRoundConfig('quiz', { ...DEFAULT_ROUND_CONFIG.quiz, durationSec: 1 })).toThrow();
+    expect(() => parseRoundConfig('quiz', { ...DEFAULT_ROUND_CONFIG.quiz, hintPenalty: -5 })).toThrow();
+    expect(() => parseRoundConfig('lightning', { ...DEFAULT_ROUND_CONFIG.lightning, questionSec: 1 })).toThrow();
+    expect(() => parseRoundConfig('showdown', { ...DEFAULT_ROUND_CONFIG.showdown, lives: 99 })).toThrow();
+    expect(parseRoundConfig('lightning', DEFAULT_ROUND_CONFIG.lightning).speedBonusMax).toBe(100);
+    expect(parseRoundConfig('showdown', DEFAULT_ROUND_CONFIG.showdown).lives).toBe(3);
   });
 });
 

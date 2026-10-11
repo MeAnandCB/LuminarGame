@@ -17,23 +17,46 @@ export type EventState = (typeof EVENT_STATES)[number];
 export type RoundStatus = 'pending' | 'running' | 'paused' | 'ended';
 export type ChallengeKind = 'choice' | 'number' | 'text';
 export type TeamStatus = 'pending' | 'approved' | 'rejected' | 'removed';
-export type AnswerOutcome = 'correct' | 'incorrect' | 'late' | 'rejected';
+export type AnswerOutcome = 'correct' | 'incorrect' | 'late' | 'rejected' | 'locked' | 'skipped';
+
+/**
+ * quiz       - Level 1 "Quick Brain": self-paced, one answer per question.
+ * lightning  - Level 2 "Reel Rush": host-paced live questions, speed + streak + Double Down.
+ * showdown   - Level 3 "Final Showdown": finalists, lives, fastest-finger steals, last team standing.
+ */
+export type RoundKind = 'quiz' | 'lightning' | 'showdown';
 
 export interface RoundConfig {
+  /** Quiz: whole-round timer. Live games: derived from the question/reveal timings. */
   durationSec: number;
-  /** Level 1: max bonus for answering quickly (0 disables). */
+  /** Quiz: 0-20 bonus. Live: bonus for answering early in the question window. */
   speedBonusMax: number;
-  /** Level 1: seconds after a question unlocks within which the bonus decays to 0. */
+  /** Quiz only: seconds after a question unlocks within which the speed bonus decays to 0. */
   speedWindowSec: number;
-  /** Levels 2/3: max bonus for finishing with time remaining. */
-  timeBonusMax: number;
-  /** Levels 2/3: bonus for completing the last stage. */
-  completionBonus: number;
-  /** Points deducted for each wrong answer (0 = none). */
+  /** Points deducted for a wrong answer (0 = none). */
   wrongPenalty: number;
+  /** Quiz only. */
   hintsEnabled: boolean;
-  /** Points deducted the first time a team opens a hint for a challenge. */
   hintPenalty: number;
+  /** Quiz only: teams may skip a question (no points, no penalty). */
+  allowSkip: boolean;
+  /** Live: seconds a question stays open. */
+  questionSec: number;
+  /** Live: seconds the answer reveal stays on screen. */
+  revealSec: number;
+  /** Live: extra points for the first team with a correct answer. */
+  fastestBonus: number;
+  /** Lightning: bonus per step of the current correct-answer streak. */
+  streakBonus: number;
+  streakCap: number;
+  /** Lightning: each team may double one question (right = 2x, wrong = lose the base points). */
+  doubleDown: boolean;
+  /** Showdown: lives per team (0 = lives disabled). */
+  lives: number;
+  /** Showdown: points the fastest correct team steals from a team that just lost a life. */
+  stealPoints: number;
+  /** Showdown: bonus for each team still alive when the round ends. */
+  survivorBonus: number;
 }
 
 export interface EventSettings {
@@ -56,6 +79,10 @@ export interface LeaderboardRow {
   connected: boolean;
   qualified: boolean | null;
   tied: boolean;
+  /** Live games only. */
+  lives: number | null;
+  streak: number;
+  eliminated: boolean;
 }
 
 export interface ScoreChange {
@@ -70,6 +97,7 @@ export interface ScoreChange {
 export interface PublicRound {
   id: number;
   level: number;
+  kind: RoundKind;
   name: string;
   status: RoundStatus;
   instructions: string;
@@ -87,6 +115,44 @@ export interface RevealedItem {
   answer: string;
 }
 
+export interface LiveOption {
+  id: string;
+  text: string;
+  /** Reveal phase only. */
+  count?: number;
+  correct?: boolean;
+}
+
+export interface LiveReveal {
+  correctText: string;
+  options: LiveOption[];
+  answered: number;
+  correctCount: number;
+  fastest: { teamId: number; name: string; bonus: number } | null;
+  steal: { thief: string; victim: string; points: number } | null;
+  eliminated: string[];
+  voided: boolean;
+}
+
+/** What the projector (and phones) may know about the live question right now. */
+export interface LivePublic {
+  phase: 'open' | 'reveal';
+  index: number;
+  total: number;
+  kind: ChallengeKind;
+  title: string;
+  prompt: string;
+  points: number;
+  options: LiveOption[];
+  answered: number;
+  eligible: number;
+  /** Server epoch ms when the phase ends; null while paused. */
+  phaseEndsAt: number | null;
+  phaseRemainingMs: number;
+  phaseTotalMs: number;
+  reveal: LiveReveal | null;
+}
+
 export interface PublicState {
   serverNow: number;
   event: { name: string; pin: string; state: EventState; joinUrl: string } | null;
@@ -100,6 +166,7 @@ export interface PublicState {
   finalists: { teamId: number; name: string }[];
   podium: LeaderboardRow[] | null;
   reveal: RevealedItem[] | null;
+  live: LivePublic | null;
 }
 
 export interface TeamChallenge {
@@ -125,9 +192,21 @@ export interface AnswerResult {
 export interface TeamHistoryItem {
   position: number;
   title: string;
-  outcome: 'correct' | 'incorrect';
+  outcome: 'correct' | 'incorrect' | 'skipped';
   points: number;
   yourAnswer: string;
+}
+
+export interface TeamLive {
+  /** The team already locked in an answer for the open question. */
+  locked: boolean;
+  /** Double Down armed for this answer / still available. */
+  doubleAvailable: boolean;
+  streak: number;
+  lives: number | null;
+  eliminated: boolean;
+  /** Reveal phase: what happened to this team on the question. */
+  result: { outcome: 'correct' | 'incorrect' | 'none' | 'voided'; points: number; breakdown: { label: string; points: number }[] } | null;
 }
 
 export interface TeamState {
@@ -141,10 +220,12 @@ export interface TeamState {
   eligible: boolean;
   progress: { position: number; total: number; finished: boolean } | null;
   challenge: TeamChallenge | null;
-  solved: { position: number; title: string; answer: string }[];
   hint: { available: boolean; used: boolean; text: string | null; penalty: number } | null;
   history: TeamHistoryItem[];
   award: string | null;
+  live: TeamLive | null;
+  /** Quiz only: the host allows skipping questions. */
+  canSkip: boolean;
 }
 
 export interface AdminChallenge {
@@ -163,7 +244,7 @@ export interface AdminRound {
   id: number;
   level: number;
   name: string;
-  kind: 'quiz' | 'puzzle';
+  kind: RoundKind;
   status: RoundStatus;
   config: RoundConfig;
   instructions: string;
@@ -173,6 +254,8 @@ export interface AdminRound {
   deadlineAt: number | null;
   remainingMs: number;
   answersRevealed: boolean;
+  liveIndex: number;
+  livePhase: 'open' | 'reveal' | null;
 }
 
 export interface AdminTeam {

@@ -160,6 +160,8 @@ const ACTION_LABEL: Record<string, string> = {
   'round.pause': '⏸ Pause',
   'round.resume': '▶ Resume',
   'round.end': '■ End round',
+  'live.advance': '⏩ Next step',
+  'live.skip': '⏭ Skip question',
   'qualification.open': 'Run qualification',
   'event.complete': '🏆 Finish event & show winners',
 };
@@ -172,6 +174,8 @@ const ACTION_PATH: Record<string, string> = {
   'round.pause': '/admin/round/pause',
   'round.resume': '/admin/round/resume',
   'round.end': '/admin/round/end',
+  'live.advance': '/admin/round/live/advance',
+  'live.skip': '/admin/round/live/skip',
   'qualification.open': '/admin/qualification/open',
   'event.complete': '/admin/event/complete',
 };
@@ -186,8 +190,10 @@ function Control({ s, now, busy, post, confirm }: { s: AdminState; now: number; 
   const run = (a: string) => {
     if (a === 'round.end') return confirm('End the round now?', 'Scores are finalised and teams can no longer answer.', 'End round', () => post(ACTION_PATH[a]!), true);
     if (a === 'event.complete') return confirm('Finish the event?', 'This shows the podium and winners. Scores can still be corrected afterwards.', 'Finish event', () => post(ACTION_PATH[a]!));
+    if (a === 'live.skip') return confirm('Skip this question?', 'The question is voided: nobody scores, no lives are lost, and the next question opens immediately.', 'Skip question', () => post(ACTION_PATH[a]!), true);
     return post(ACTION_PATH[a]!);
   };
+  const liveLabel = (a: string) => (a === 'live.advance' ? (round?.livePhase === 'open' ? '⏩ Close question now' : '⏭ Next question') : ACTION_LABEL[a]);
   const actions = s.allowedActions.filter((a) => ACTION_PATH[a]);
   const endedRound = s.event.state === 'ROUND_ENDED' ? round : null;
 
@@ -206,6 +212,12 @@ function Control({ s, now, busy, post, confirm }: { s: AdminState; now: number; 
               <p className={`mono text-5xl font-black ${round.status === 'paused' ? 'text-warn' : 'text-neon'}`}>{fmtClock(left)}</p>
             </div>
           )}
+          {round && round.kind !== 'quiz' && (round.status === 'running' || round.status === 'paused') && (
+            <div>
+              <p className="text-sm text-muted">Live question</p>
+              <p className="text-lg font-bold" data-testid="live-status">{round.liveIndex + 1} / {round.challenges.length} · {round.livePhase === 'reveal' ? 'revealing' : 'open'}</p>
+            </div>
+          )}
           <div className="text-sm text-muted">
             <p>Teams <strong className="text-text">{s.counts.teams}/{s.counts.capacity}</strong> · online <strong className="text-text">{s.counts.connected}</strong></p>
             <p>Answers in <strong className="text-text">{s.counts.submissions}</strong> · finished <strong className="text-text">{s.counts.finished}</strong></p>
@@ -216,9 +228,9 @@ function Control({ s, now, busy, post, confirm }: { s: AdminState; now: number; 
           {actions.map((a) => (
             <button
               key={a} disabled={busy} onClick={() => run(a)} data-testid={`act-${a}`}
-              className={`btn ${a === 'round.start' || a === 'round.resume' ? 'btn-primary' : a === 'round.end' ? 'btn-danger' : a === 'event.complete' ? 'btn-violet' : 'btn-ghost'}`}
+              className={`btn ${a === 'round.start' || a === 'round.resume' || a === 'live.advance' ? 'btn-primary' : a === 'round.end' ? 'btn-danger' : a === 'event.complete' ? 'btn-violet' : 'btn-ghost'}`}
             >
-              {a === 'round.prepare' ? `Prepare Level ${nextLevel}` : ACTION_LABEL[a]}
+              {a === 'round.prepare' ? `Prepare Level ${nextLevel}` : liveLabel(a)}
             </button>
           ))}
           {actions.length === 0 && <Empty>No actions available in this state.</Empty>}
@@ -306,6 +318,15 @@ function Teams({ s, busy, post, confirm }: { s: AdminState; busy: boolean; post:
   );
 }
 
+function Check({ id, label, checked, onChange, disabled }: { id: string; label: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <div className="flex items-end gap-2">
+      <input id={id} type="checkbox" className="h-6 w-6" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+      <label htmlFor={id} className="lbl !mb-0 pb-3">{label}</label>
+    </div>
+  );
+}
+
 function NumField({ id, label, value, onChange, min, max, disabled }: { id: string; label: string; value: number; onChange: (n: number) => void; min: number; max: number; disabled?: boolean }) {
   return (
     <div>
@@ -345,34 +366,54 @@ function RoundEditor({ r, keys, act }: { r: AdminRound; keys: boolean; act: <T>(
     <div className="mt-3 flex flex-col gap-4">
       {locked && <p className="text-sm text-warn">Scoring and timers are locked once a round has started.</p>}
       <form className="grid grid-cols-2 gap-3 md:grid-cols-4" onSubmit={(e) => { e.preventDefault(); void act(() => api('PATCH', `/admin/round/${r.level}/config`, cfg)); }}>
-        <NumField id={`d${r.level}`} label="Duration (seconds)" value={cfg.durationSec} min={30} max={7200} disabled={locked} onChange={(n) => set('durationSec', n)} />
-        {r.kind === 'quiz' ? (
+        {r.kind === 'quiz' && (
           <>
+            <NumField id={`d${r.level}`} label="Duration (seconds)" value={cfg.durationSec} min={30} max={7200} disabled={locked} onChange={(n) => set('durationSec', n)} />
             <NumField id={`sb${r.level}`} label="Speed bonus max (0–20)" value={cfg.speedBonusMax} min={0} max={20} disabled={locked} onChange={(n) => set('speedBonusMax', n)} />
             <NumField id={`sw${r.level}`} label="Speed window (s)" value={cfg.speedWindowSec} min={1} max={600} disabled={locked} onChange={(n) => set('speedWindowSec', n)} />
-          </>
-        ) : (
-          <>
-            <NumField id={`tb${r.level}`} label="Time bonus max" value={cfg.timeBonusMax} min={0} max={1000} disabled={locked} onChange={(n) => set('timeBonusMax', n)} />
-            <NumField id={`cb${r.level}`} label="Completion bonus" value={cfg.completionBonus} min={0} max={5000} disabled={locked} onChange={(n) => set('completionBonus', n)} />
+            <NumField id={`wp${r.level}`} label="Wrong-answer penalty" value={cfg.wrongPenalty} min={0} max={500} disabled={locked} onChange={(n) => set('wrongPenalty', n)} />
+            <Check id={`sk${r.level}`} label="Teams may skip questions" checked={cfg.allowSkip} disabled={locked} onChange={(v) => set('allowSkip', v)} />
+            <Check id={`he${r.level}`} label="Hints enabled" checked={cfg.hintsEnabled} disabled={locked} onChange={(v) => set('hintsEnabled', v)} />
+            <NumField id={`hp${r.level}`} label="Hint penalty" value={cfg.hintPenalty} min={0} max={1000} disabled={locked || !cfg.hintsEnabled} onChange={(n) => set('hintPenalty', n)} />
           </>
         )}
-        <NumField id={`wp${r.level}`} label="Wrong-answer penalty" value={cfg.wrongPenalty} min={0} max={500} disabled={locked} onChange={(n) => set('wrongPenalty', n)} />
-        <div className="flex items-end gap-2"><input id={`he${r.level}`} type="checkbox" className="h-6 w-6" checked={cfg.hintsEnabled} disabled={locked} onChange={(e) => set('hintsEnabled', e.target.checked)} /><label htmlFor={`he${r.level}`} className="lbl !mb-0 pb-3">Hints enabled</label></div>
-        <NumField id={`hp${r.level}`} label="Hint penalty" value={cfg.hintPenalty} min={0} max={1000} disabled={locked || !cfg.hintsEnabled} onChange={(n) => set('hintPenalty', n)} />
+        {r.kind !== 'quiz' && (
+          <>
+            <NumField id={`qs${r.level}`} label="Seconds per question" value={cfg.questionSec} min={5} max={120} disabled={locked} onChange={(n) => set('questionSec', n)} />
+            <NumField id={`rs${r.level}`} label="Reveal seconds" value={cfg.revealSec} min={2} max={60} disabled={locked} onChange={(n) => set('revealSec', n)} />
+            <NumField id={`sb${r.level}`} label="Speed bonus max" value={cfg.speedBonusMax} min={0} max={500} disabled={locked} onChange={(n) => set('speedBonusMax', n)} />
+            <NumField id={`fb${r.level}`} label="Fastest-finger bonus" value={cfg.fastestBonus} min={0} max={500} disabled={locked} onChange={(n) => set('fastestBonus', n)} />
+            <NumField id={`wp${r.level}`} label="Wrong-answer penalty" value={cfg.wrongPenalty} min={0} max={500} disabled={locked} onChange={(n) => set('wrongPenalty', n)} />
+          </>
+        )}
+        {r.kind === 'lightning' && (
+          <>
+            <NumField id={`st${r.level}`} label="Streak bonus per step" value={cfg.streakBonus} min={0} max={200} disabled={locked} onChange={(n) => set('streakBonus', n)} />
+            <NumField id={`sc${r.level}`} label="Streak cap (steps)" value={cfg.streakCap} min={0} max={20} disabled={locked} onChange={(n) => set('streakCap', n)} />
+            <Check id={`dd${r.level}`} label="Double Down power-up" checked={cfg.doubleDown} disabled={locked} onChange={(v) => set('doubleDown', v)} />
+          </>
+        )}
+        {r.kind === 'showdown' && (
+          <>
+            <NumField id={`lv${r.level}`} label="Lives per team" value={cfg.lives} min={0} max={10} disabled={locked} onChange={(n) => set('lives', n)} />
+            <NumField id={`sp${r.level}`} label="Steal points" value={cfg.stealPoints} min={0} max={1000} disabled={locked} onChange={(n) => set('stealPoints', n)} />
+            <NumField id={`sv${r.level}`} label="Survivor bonus" value={cfg.survivorBonus} min={0} max={5000} disabled={locked} onChange={(n) => set('survivorBonus', n)} />
+          </>
+        )}
         <div className="flex items-end"><button className="btn btn-primary btn-sm w-full" disabled={locked || !dirty}>Save scoring</button></div>
       </form>
+      {r.kind !== 'quiz' && <p className="text-sm text-muted">Round length is calculated automatically: {r.challenges.length} questions × ({cfg.questionSec}s + {cfg.revealSec}s) ≈ {Math.ceil((r.challenges.length * (cfg.questionSec + cfg.revealSec)) / 60)} minutes.</p>}
       <div>
-        <h3 className="mb-2 font-bold">{r.kind === 'quiz' ? 'Questions' : 'Stages'} ({r.challenges.length}) – preview</h3>
+        <h3 className="mb-2 font-bold">Questions ({r.challenges.length}) – preview</h3>
         <ol className="space-y-2">
-          {r.challenges.map((c) => <ChallengeRowEditor key={c.id} c={c} keys={keys} locked={locked} act={act} />)}
+          {r.challenges.map((c) => <ChallengeRowEditor key={c.id} c={c} keys={keys} locked={locked} act={act} quiz={r.kind === 'quiz'} />)}
         </ol>
       </div>
     </div>
   );
 }
 
-function ChallengeRowEditor({ c, keys, locked, act }: { c: AdminChallenge; keys: boolean; locked: boolean; act: <T>(fn: () => Promise<T>) => Promise<T | undefined> }) {
+function ChallengeRowEditor({ c, keys, locked, act, quiz }: { c: AdminChallenge; keys: boolean; locked: boolean; act: <T>(fn: () => Promise<T>) => Promise<T | undefined>; quiz: boolean }) {
   const [points, setPoints] = useState(c.points);
   const [hint, setHint] = useState(c.hint ?? '');
   useEffect(() => { setPoints(c.points); setHint(c.hint ?? ''); }, [c.points, c.hint]);
@@ -389,7 +430,7 @@ function ChallengeRowEditor({ c, keys, locked, act }: { c: AdminChallenge; keys:
         </div>
         <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); void act(() => api('PATCH', `/admin/challenges/${c.id}`, { points, hint: hint || null })); }}>
           <div className="w-24"><label className="lbl" htmlFor={`p${c.id}`}>Points</label><input id={`p${c.id}`} type="number" min={0} max={5000} className="field !min-h-10" disabled={locked} value={Number.isFinite(points) ? points : ''} onChange={(e) => setPoints(Number(e.target.value))} /></div>
-          {c.hint !== null || c.kind !== 'choice' ? <div className="w-56"><label className="lbl" htmlFor={`h${c.id}`}>Hint</label><input id={`h${c.id}`} className="field !min-h-10" maxLength={300} disabled={locked} value={hint} onChange={(e) => setHint(e.target.value)} /></div> : null}
+          {quiz ? <div className="w-56"><label className="lbl" htmlFor={`h${c.id}`}>Hint</label><input id={`h${c.id}`} className="field !min-h-10" maxLength={300} disabled={locked} value={hint} onChange={(e) => setHint(e.target.value)} /></div> : null}
           <button className="btn btn-ghost btn-sm" disabled={locked || !dirty}>Save</button>
         </form>
       </div>

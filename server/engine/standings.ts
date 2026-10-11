@@ -1,4 +1,5 @@
 import { rankTeams, type Ranked } from '../game/ranking.js';
+import { isLive } from '../game/scoring.js';
 import type { LeaderboardRow } from '../../shared/types.js';
 import type { Ctx, EventRow, RoundRow } from './context.js';
 
@@ -6,6 +7,9 @@ export interface Standing extends Ranked {
   roundScore: number;
   progress: number;
   progressTotal: number;
+  lives: number | null;
+  streak: number;
+  eliminated: boolean;
 }
 
 /**
@@ -46,6 +50,12 @@ export function computeStandings(ctx: Ctx, ev: EventRow): Standing[] {
     for (const p of ctx.db.all<{ team_id: number; position: number }>('SELECT team_id, position FROM team_stage_progress WHERE round_id = ?', current.id)) totals.set(p.team_id, p.position);
   }
 
+  const liveState = new Map<number, { lives: number | null; streak: number; eliminated: number }>();
+  if (current && isLive(current.kind)) {
+    for (const l of ctx.db.all<{ team_id: number; lives: number | null; streak: number; eliminated: number }>('SELECT team_id, lives, streak, eliminated FROM live_team_state WHERE round_id = ?', current.id)) liveState.set(l.team_id, l);
+    // Live rounds show the question number as progress.
+    for (const [teamId] of liveState) totals.set(teamId, 0);
+  }
   const frozen = ev.qualification_frozen === 1;
   const ranked = rankTeams(
     rows.map((r) => ({
@@ -59,7 +69,15 @@ export function computeStandings(ctx: Ctx, ev: EventRow): Standing[] {
     })),
   );
   const byId = new Map(rows.map((r) => [r.id, r]));
-  return ranked.map((r) => ({ ...r, roundScore: byId.get(r.teamId)!.round_score, progress: totals.get(r.teamId) ?? 0, progressTotal }));
+  return ranked.map((r) => ({
+    ...r,
+    roundScore: byId.get(r.teamId)!.round_score,
+    progress: totals.get(r.teamId) ?? 0,
+    progressTotal: current && isLive(current.kind) ? 0 : progressTotal,
+    lives: liveState.get(r.teamId)?.lives ?? null,
+    streak: liveState.get(r.teamId)?.streak ?? 0,
+    eliminated: liveState.get(r.teamId)?.eliminated === 1,
+  }));
 }
 
 export function qualificationVisible(ctx: Ctx, ev: EventRow): boolean {
@@ -81,6 +99,9 @@ export function toRows(ctx: Ctx, ev: EventRow, standings: Standing[]): Leaderboa
     connected: ctx.isConnected(s.teamId),
     qualified: showQual ? (qualified.get(s.teamId) ?? false) : null,
     tied: s.tied,
+    lives: s.lives,
+    streak: s.streak,
+    eliminated: s.eliminated,
   }));
 }
 

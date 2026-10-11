@@ -1,29 +1,31 @@
 import { z } from 'zod';
-import type { EventSettings, RoundConfig } from '../../shared/types.js';
+import type { EventSettings, RoundConfig, RoundKind } from '../../shared/types.js';
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
-/** Level 1 speed bonus: linear decay from max to 0 across the window. */
+/** Linear decay from max to 0 across the window (quiz: window after unlock; live: the question window). */
 export function speedBonus(max: number, windowMs: number, elapsedMs: number): number {
   if (max <= 0 || windowMs <= 0) return 0;
   return Math.round(max * clamp(1 - elapsedMs / windowMs, 0, 1));
 }
 
-/** Levels 2/3 time bonus: proportional to the share of the round still left. */
-export function timeBonus(max: number, durationMs: number, remainingMs: number): number {
-  if (max <= 0 || durationMs <= 0) return 0;
-  return Math.round(max * clamp(remainingMs / durationMs, 0, 1));
-}
-
 export const roundConfigSchema = z.object({
-  durationSec: z.number().int().min(30).max(7200),
-  speedBonusMax: z.number().int().min(0).max(20),
+  durationSec: z.number().int().min(30).max(14400),
+  speedBonusMax: z.number().int().min(0).max(500),
   speedWindowSec: z.number().int().min(1).max(600),
-  timeBonusMax: z.number().int().min(0).max(1000),
-  completionBonus: z.number().int().min(0).max(5000),
   wrongPenalty: z.number().int().min(0).max(500),
   hintsEnabled: z.boolean(),
   hintPenalty: z.number().int().min(0).max(1000),
+  allowSkip: z.boolean(),
+  questionSec: z.number().int().min(5).max(120),
+  revealSec: z.number().int().min(2).max(60),
+  fastestBonus: z.number().int().min(0).max(500),
+  streakBonus: z.number().int().min(0).max(200),
+  streakCap: z.number().int().min(0).max(20),
+  doubleDown: z.boolean(),
+  lives: z.number().int().min(0).max(10),
+  stealPoints: z.number().int().min(0).max(1000),
+  survivorBonus: z.number().int().min(0).max(5000),
 });
 
 export const eventSettingsSchema = z.object({
@@ -40,12 +42,40 @@ export const DEFAULT_EVENT_SETTINGS: EventSettings = {
   liveScores: true,
 };
 
-export const DEFAULT_ROUND_CONFIG: Record<number, RoundConfig> = {
-  1: { durationSec: 600, speedBonusMax: 10, speedWindowSec: 30, timeBonusMax: 0, completionBonus: 0, wrongPenalty: 0, hintsEnabled: false, hintPenalty: 0 },
-  2: { durationSec: 900, speedBonusMax: 0, speedWindowSec: 30, timeBonusMax: 200, completionBonus: 0, wrongPenalty: 0, hintsEnabled: true, hintPenalty: 50 },
-  3: { durationSec: 1200, speedBonusMax: 0, speedWindowSec: 30, timeBonusMax: 200, completionBonus: 500, wrongPenalty: 0, hintsEnabled: true, hintPenalty: 100 },
+const BASE: RoundConfig = {
+  durationSec: 600,
+  speedBonusMax: 0,
+  speedWindowSec: 30,
+  wrongPenalty: 0,
+  hintsEnabled: false,
+  hintPenalty: 0,
+  allowSkip: false,
+  questionSec: 20,
+  revealSec: 7,
+  fastestBonus: 0,
+  streakBonus: 0,
+  streakCap: 0,
+  doubleDown: false,
+  lives: 0,
+  stealPoints: 0,
+  survivorBonus: 0,
 };
 
-export function parseRoundConfig(value: unknown): RoundConfig {
-  return roundConfigSchema.parse(value);
+export const DEFAULT_ROUND_CONFIG: Record<RoundKind, RoundConfig> = {
+  quiz: { ...BASE, durationSec: 600, speedBonusMax: 10, speedWindowSec: 30, allowSkip: true },
+  lightning: { ...BASE, questionSec: 20, revealSec: 7, speedBonusMax: 100, fastestBonus: 50, streakBonus: 25, streakCap: 4, doubleDown: true },
+  showdown: { ...BASE, questionSec: 25, revealSec: 8, speedBonusMax: 150, fastestBonus: 100, lives: 3, stealPoints: 75, survivorBonus: 300 },
+};
+
+export const isLive = (kind: RoundKind): boolean => kind === 'lightning' || kind === 'showdown';
+
+/** Live rounds run on question/reveal timers; the round clock is their sum plus a little slack. */
+export function liveDurationSec(questions: number, cfg: Pick<RoundConfig, 'questionSec' | 'revealSec'>): number {
+  return questions * (cfg.questionSec + cfg.revealSec) + 10;
+}
+
+export function parseRoundConfig(kind: RoundKind, value: unknown): RoundConfig {
+  const cfg = roundConfigSchema.parse(value);
+  if (kind === 'quiz' && cfg.speedBonusMax > 20) throw new z.ZodError([{ code: 'custom', path: ['speedBonusMax'], message: 'Quiz speed bonus is limited to 20', input: cfg.speedBonusMax }]);
+  return cfg;
 }

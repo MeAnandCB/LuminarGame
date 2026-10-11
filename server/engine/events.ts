@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import { SEED_ROUNDS } from '../content/seed.js';
 import { assertTransition } from '../game/stateMachine.js';
-import { DEFAULT_EVENT_SETTINGS, DEFAULT_ROUND_CONFIG, eventSettingsSchema, parseRoundConfig } from '../game/scoring.js';
+import { DEFAULT_EVENT_SETTINGS, DEFAULT_ROUND_CONFIG, eventSettingsSchema, isLive, liveDurationSec, parseRoundConfig } from '../game/scoring.js';
+import { initLive, liveAdvance, onRoundEnd } from '../games/live.js';
 import { pauseTimer, resumeTimer, startTimer } from '../game/timer.js';
 import { AppError, type ChallengeRow, type Ctx, type EventRow, type RoundRow } from './context.js';
 import { computeStandings, writeSnapshot } from './standings.js';
@@ -20,7 +21,9 @@ function generatePin(ctx: Ctx): string {
 
 function seedRounds(ctx: Ctx, eventId: number): void {
   for (const r of SEED_ROUNDS) {
-    const { lastId } = ctx.db.run('INSERT INTO rounds (event_id, level, name, kind, config, instructions) VALUES (?,?,?,?,?,?)', eventId, r.level, r.name, r.kind, JSON.stringify(DEFAULT_ROUND_CONFIG[r.level]), r.instructions);
+    const cfg = { ...DEFAULT_ROUND_CONFIG[r.kind] };
+    if (isLive(r.kind)) cfg.durationSec = liveDurationSec(r.challenges.length, cfg);
+    const { lastId } = ctx.db.run('INSERT INTO rounds (event_id, level, name, kind, config, instructions) VALUES (?,?,?,?,?,?)', eventId, r.level, r.name, r.kind, JSON.stringify(cfg), r.instructions);
     r.challenges.forEach((c, i) => {
       ctx.db.run('INSERT INTO challenges (round_id, position, kind, title, prompt, options, answers, points, hint) VALUES (?,?,?,?,?,?,?,?,?)', lastId, i, c.kind, c.title, c.prompt, c.options ? JSON.stringify(c.options) : null, JSON.stringify(c.answers), c.points, c.hint ?? null);
     });
@@ -82,7 +85,7 @@ export function resetEvent(ctx: Ctx, actor: string): EventRow {
     ctx.db.run('DELETE FROM teams WHERE event_id = ?', ev.id); // cascades sessions, progress, hints, submissions, ledger, snapshots
     ctx.db.run('DELETE FROM score_ledger WHERE event_id = ?', ev.id);
     ctx.db.run('DELETE FROM leaderboard_snapshots WHERE event_id = ?', ev.id);
-    ctx.db.run("UPDATE rounds SET status='pending', started_at=NULL, deadline_at=NULL, remaining_ms=NULL, heartbeat_at=NULL, ended_at=NULL, answers_revealed=0 WHERE event_id = ?", ev.id);
+    ctx.db.run("UPDATE rounds SET status='pending', started_at=NULL, deadline_at=NULL, remaining_ms=NULL, heartbeat_at=NULL, ended_at=NULL, answers_revealed=0, live_index=0, live_phase=NULL, live_clock_start=0, live_q_start=0 WHERE event_id = ?", ev.id);
     ctx.db.run('UPDATE events SET state = ?, current_round_id = NULL, qualification_frozen = 0, completed_at = NULL, updated_at = ? WHERE id = ?', 'SETUP', ctx.nowIso(), ev.id);
     ctx.db.run('INSERT INTO event_state_history (event_id, from_state, to_state, actor, reason, created_at) VALUES (?,?,?,?,?,?)', ev.id, ev.state, 'SETUP', actor, 'event reset', ctx.nowIso());
     ctx.audit(ev.id, actor, 'event.reset', { teamsRemoved: kick.length, previousState: ev.state });
@@ -135,8 +138,9 @@ export function confirmTeams(ctx: Ctx, actor: string): void {
 export function validateRound(ctx: Ctx, round: RoundRow): void {
   const items = ctx.challenges(round.id);
   if (items.length === 0) throw new AppError(409, 'INVALID_ROUND', `${round.name} has no questions.`);
+  if (!['quiz', 'lightning', 'showdown'].includes(round.kind)) throw new AppError(409, 'INVALID_ROUND', `${round.name} was created by an older version of the game. Create a new event to use the current games.`);
   try {
-    parseRoundConfig(JSON.parse(round.config));
+    parseRoundConfig(round.kind, JSON.parse(round.config));
   } catch {
     throw new AppError(409, 'INVALID_ROUND', `${round.name} has an invalid scoring configuration.`);
   }
@@ -185,6 +189,7 @@ export function startRound(ctx: Ctx, actor: string): void {
     const now = ctx.clock.now();
     const t = startTimer(ctx.roundConfig(r).durationSec * 1000, now);
     ctx.db.run("UPDATE rounds SET status='running', started_at=?, deadline_at=?, remaining_ms=NULL, heartbeat_at=? WHERE id=?", now, t.deadlineAt, now, r.id);
+    if (isLive(r.kind)) initLive(ctx, ev, r);
     if (r.level === FINAL_LEVEL) ctx.db.run('UPDATE events SET qualification_frozen = 1 WHERE id = ?', ev.id);
     ctx.setState(ev, 'ROUND_RUNNING', actor, `start level ${r.level}`);
     ctx.audit(ev.id, actor, 'round.start', { level: r.level, deadlineAt: t.deadlineAt });
@@ -227,7 +232,8 @@ export function endRound(ctx: Ctx, actor: string, reason = 'ended by host'): voi
   ctx.db.tx(() => {
     assertTransition(ev.state, 'ROUND_ENDED');
     const r = ctx.currentRound(ev)!;
-    ctx.db.run("UPDATE rounds SET status='ended', ended_at=?, deadline_at=NULL, remaining_ms=0 WHERE id=?", ctx.clock.now(), r.id);
+    onRoundEnd(ctx, ev, r);
+    ctx.db.run("UPDATE rounds SET status='ended', ended_at=?, deadline_at=NULL, remaining_ms=0, live_phase=NULL WHERE id=?", ctx.clock.now(), r.id);
     ctx.setState(ev, 'ROUND_ENDED', actor, reason);
     ctx.audit(ev.id, actor, 'round.end', { level: r.level, reason });
     ended = r;
@@ -307,7 +313,10 @@ export function tick(ctx: Ctx): void {
   const now = ctx.clock.now();
   if (now > r.deadline_at) {
     endRound(ctx, 'system', 'timer expired');
-  } else if (now - (r.heartbeat_at ?? 0) >= 1000) {
+    return;
+  }
+  if (isLive(r.kind)) liveAdvance(ctx);
+  if (now - (r.heartbeat_at ?? 0) >= 1000) {
     ctx.db.run('UPDATE rounds SET heartbeat_at = ? WHERE id = ?', now, r.id);
   }
 }

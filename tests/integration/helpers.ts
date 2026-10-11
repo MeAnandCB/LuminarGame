@@ -107,8 +107,12 @@ export class TeamClient extends Client {
     this.state = r.json;
     return r.json;
   }
-  async answer(answer: string, extra: { requestId?: string; challengeId?: number } = {}) {
-    const r = await this.post('/api/team/answer', { requestId: extra.requestId ?? uid(), answer, ...(extra.challengeId ? { challengeId: extra.challengeId } : {}) });
+  async answer(answer: string, extra: { requestId?: string; challengeId?: number; doubleDown?: boolean } = {}) {
+    const r = await this.post('/api/team/answer', { requestId: extra.requestId ?? uid(), answer, ...(extra.challengeId ? { challengeId: extra.challengeId } : {}), ...(extra.doubleDown ? { doubleDown: true } : {}) });
+    return r as { status: number; json: AnswerResult & { error?: { code: string } } };
+  }
+  async skip(extra: { requestId?: string; challengeId?: number } = {}) {
+    const r = await this.post('/api/team/skip', { requestId: extra.requestId ?? uid(), ...(extra.challengeId ? { challengeId: extra.challengeId } : {}) });
     return r as { status: number; json: AnswerResult & { error?: { code: string } } };
   }
   async hint() {
@@ -126,6 +130,32 @@ export function wrong(level: number, position: number): string {
   if (c.kind === 'choice') return c.answers[0] === 'a' ? 'b' : 'a';
   if (c.kind === 'number') return '-999';
   return 'WRONGANSWER';
+}
+
+/**
+ * Plays a whole live round (Reel Rush / Final Showdown) using the host's advance button instead of waiting for clocks.
+ * pick(teamIndex, questionIndex) returns 'LIVE_CORRECT', 'LIVE_WRONG' or null (no answer).
+ */
+export async function playLive(admin: Client, teams: TeamClient[], pick: (team: number, question: number) => string | null, level: number) {
+  for (let guard = 0; guard < 40; guard++) {
+    const s = await adminState(admin);
+    if (s.event.state !== 'ROUND_RUNNING') return;
+    const round = s.rounds.find((r) => r.id === s.event.currentRoundId)!;
+    if (round.livePhase === 'open') {
+      for (let i = 0; i < teams.length; i++) {
+        const p = pick(i, round.liveIndex);
+        if (p === null) continue;
+        const text = p === 'LIVE_CORRECT' ? correct(level, round.liveIndex) : p === 'LIVE_WRONG' ? wrong(level, round.liveIndex) : p;
+        await teams[i]!.answer(text);
+      }
+    }
+    const mid = await adminState(admin);
+    if (mid.event.state !== 'ROUND_RUNNING') return;
+    const r2 = mid.rounds.find((r) => r.id === mid.event.currentRoundId)!;
+    if (r2.livePhase === 'open') await admin.post('/api/admin/round/live/advance'); // close the question -> reveal
+    await admin.post('/api/admin/round/live/advance'); // leave the reveal -> next question / end
+  }
+  throw new Error('live round did not finish');
 }
 
 export async function setupEvent(b: Booted, opts: { teams?: number; settings?: Record<string, unknown> } = {}) {

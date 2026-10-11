@@ -1,4 +1,5 @@
 import { canTransition } from '../game/stateMachine.js';
+import { isLive } from '../game/scoring.js';
 import type { Ctx, EventRow } from './context.js';
 
 /** Which admin buttons make sense right now. The server still enforces every transition itself. */
@@ -17,6 +18,7 @@ export function allowedActions(ctx: Ctx, ev: EventRow): string[] {
   }
   if (s === 'ROUND_READY') out.push('round.start');
   if (s === 'ROUND_RUNNING') out.push('round.pause', 'round.end');
+  if (s === 'ROUND_RUNNING' && round && isLive(round.kind)) out.push('live.advance', 'live.skip');
   if (s === 'ROUND_PAUSED') out.push('round.resume', 'round.end');
   if (s === 'ROUND_ENDED' && round?.level === 2) out.push('qualification.open');
   if (s === 'ROUND_READY' && round?.level === 3 && round.status === 'pending') out.push('qualification.open');

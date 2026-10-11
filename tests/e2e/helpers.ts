@@ -49,9 +49,33 @@ export async function apiAnswer(page: Page, answer: string, challengeId?: number
   return r.json() as Promise<{ outcome: string; points: number; advanced: boolean }>;
 }
 
-export async function solveRemaining(page: Page, level: number, from: number) {
-  for (let i = from; i < stageCount(level); i++) {
-    const r = await apiAnswer(page, answerFor(level, i));
+/** Plays out a live round via the teams' own sessions, using the host's API to move between phases. */
+export async function playLiveRound(admin: AdminApi, pages: Page[], level: number, pick: (team: number, q: number) => 'right' | 'wrong' | null, fromQuestion = 0) {
+  for (let guard = 0; guard < 40; guard++) {
+    const s = await admin.state();
+    if (s.event.state !== 'ROUND_RUNNING') return;
+    const round = s.rounds.find((r: { id: number }) => r.id === s.event.currentRoundId);
+    const q = round.liveIndex as number;
+    if (round.livePhase === 'open' && q >= fromQuestion) {
+      for (let i = 0; i < pages.length; i++) {
+        const p = pick(i, q);
+        if (p === null) continue;
+        const ans = answerFor(level, q);
+        const wrong = ans === 'a' ? 'b' : 'a';
+        await pages[i]!.request.post('/api/team/answer', { data: { requestId: Math.random().toString(36).slice(2) + Date.now(), answer: p === 'right' ? ans : wrong } });
+      }
+    }
+    const mid = await admin.state();
+    if (mid.event.state !== 'ROUND_RUNNING') return;
+    if (mid.rounds.find((r: { id: number }) => r.id === mid.event.currentRoundId).livePhase === 'open') await admin.post('/round/live/advance');
+    await admin.post('/round/live/advance');
+  }
+  throw new Error('live round did not finish');
+}
+
+export async function solveQuiz(page: Page, from: number) {
+  for (let i = from; i < stageCount(1); i++) {
+    const r = await apiAnswer(page, answerFor(1, i));
     expect(r.outcome).toBe('correct');
   }
 }

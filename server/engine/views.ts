@@ -1,6 +1,8 @@
 import type { Ctx, EventRow, RoundRow, TeamRow, ChallengeRow } from './context.js';
 import { computeStandings, qualificationVisible, toRows, type Standing } from './standings.js';
-import { eligibleForRound } from './play.js';
+import { eligibleForRound } from '../games/shared.js';
+import { livePublic, teamLive } from '../games/live.js';
+import { isLive } from '../game/scoring.js';
 import { allowedActions } from './actions.js';
 import { remainingAt } from '../game/timer.js';
 import type {
@@ -16,6 +18,7 @@ function publicRound(ctx: Ctx, r: RoundRow): PublicRound {
   return {
     id: r.id,
     level: r.level,
+    kind: r.kind,
     name: r.name,
     status: r.status,
     instructions: r.instructions,
@@ -69,7 +72,7 @@ export function publicState(ctx: Ctx): PublicState {
   const ev = ctx.currentEvent();
   const now = ctx.clock.now();
   if (!ev) {
-    return { serverNow: now, event: null, round: null, nextLevel: null, counts: { teams: 0, connected: 0, submissions: 0, finished: 0, capacity: 20 }, leaderboard: [], provisional: false, scoresHidden: false, recent: [], finalists: [], podium: null, reveal: null };
+    return { serverNow: now, event: null, round: null, nextLevel: null, counts: { teams: 0, connected: 0, submissions: 0, finished: 0, capacity: 20 }, leaderboard: [], provisional: false, scoresHidden: false, recent: [], finalists: [], podium: null, reveal: null, live: null };
   }
   const standings = computeStandings(ctx, ev);
   const hidden = scoresHidden(ctx, ev);
@@ -93,6 +96,7 @@ export function publicState(ctx: Ctx): PublicState {
     finalists: showQual ? rows.filter((r) => r.qualified).map((r) => ({ teamId: r.teamId, name: r.name })) : [],
     podium: ev.state === 'EVENT_COMPLETED' ? rows.slice(0, 3) : null,
     reveal: reveal(ctx, ev),
+    live: round ? livePublic(ctx, ev, round) : null,
   };
 }
 
@@ -121,10 +125,11 @@ export function teamState(ctx: Ctx, team: TeamRow, cached?: Standing[]): TeamSta
     eligible: false,
     progress: null,
     challenge: null,
-    solved: [],
     hint: null,
     history: [],
     award: null,
+    live: null,
+    canSkip: false,
   };
 
   if (ev.state === 'EVENT_COMPLETED' && me) {
@@ -134,6 +139,11 @@ export function teamState(ctx: Ctx, team: TeamRow, cached?: Standing[]): TeamSta
 
   state.eligible = eligibleForRound(team, round);
   if (!state.eligible) return state;
+  if (isLive(round.kind)) {
+    state.live = teamLive(ctx, team, ev, round);
+    state.progress = { position: round.live_index, total: ctx.challenges(round.id).length, finished: round.status === 'ended' };
+    return state;
+  }
   const items = ctx.challenges(round.id);
   const prog = ctx.db.get<{ position: number; finished_at: number | null }>('SELECT position, finished_at FROM team_stage_progress WHERE team_id = ? AND round_id = ?', team.id, round.id);
   const position = prog?.position ?? 0;
@@ -146,27 +156,23 @@ export function teamState(ctx: Ctx, team: TeamRow, cached?: Standing[]): TeamSta
     const cfg = ctx.roundConfig(round);
     const current = items[position]!;
     const used = !!ctx.db.get('SELECT 1 FROM hints_used WHERE team_id = ? AND challenge_id = ?', team.id, current.id);
+    state.canSkip = cfg.allowSkip;
     state.hint = { available: cfg.hintsEnabled && !!current.hint, used, text: used ? current.hint : null, penalty: cfg.hintPenalty };
   }
-  if (round.kind === 'puzzle') {
-    state.solved = items.slice(0, position).map((c) => ({ position: c.position, title: c.title, answer: JSON.parse(c.answers)[0] as string }));
-  }
   // History of own answers (used for review after the host reveals answers).
-  const subs = ctx.db.all<{ challenge_id: number; outcome: 'correct' | 'incorrect'; points: number; raw_answer: string }>(
-    "SELECT challenge_id, outcome, points, raw_answer FROM answer_submissions WHERE team_id = ? AND round_id = ? AND outcome IN ('correct','incorrect') ORDER BY id",
+  const subs = ctx.db.all<{ challenge_id: number; outcome: 'correct' | 'incorrect' | 'skipped'; points: number; raw_answer: string }>(
+    "SELECT challenge_id, outcome, points, raw_answer FROM answer_submissions WHERE team_id = ? AND round_id = ? AND outcome IN ('correct','incorrect','skipped') ORDER BY id",
     team.id,
     round.id,
   );
-  if (round.kind === 'quiz') {
-    const byChallenge = new Map(subs.map((s) => [s.challenge_id, s]));
-    state.history = items.flatMap((c): TeamHistoryItem[] => {
-      const s = byChallenge.get(c.id);
-      if (!s) return [];
-      const opts = parse<{ id: string; text: string }[]>(c.options);
-      const yourAnswer = c.kind === 'choice' && opts ? (opts.find((o) => o.id === s.raw_answer.trim().toLowerCase())?.text ?? s.raw_answer) : s.raw_answer;
-      return [{ position: c.position, title: c.title, outcome: s.outcome, points: s.points, yourAnswer }];
-    });
-  }
+  const byChallenge = new Map(subs.map((s) => [s.challenge_id, s]));
+  state.history = items.flatMap((c): TeamHistoryItem[] => {
+    const s = byChallenge.get(c.id);
+    if (!s) return [];
+    const opts = parse<{ id: string; text: string }[]>(c.options);
+    const yourAnswer = c.kind === 'choice' && opts ? (opts.find((o) => o.id === s.raw_answer.trim().toLowerCase())?.text ?? s.raw_answer) : s.raw_answer;
+    return [{ position: c.position, title: c.title, outcome: s.outcome, points: s.points, yourAnswer }];
+  });
   return state;
 }
 
@@ -193,7 +199,7 @@ export function adminState(ctx: Ctx): AdminState | null {
     duplicateName: (t.status === 'pending' || t.status === 'approved') && (nameCount.get(loose(t.name)) ?? 0) > 1, createdAt: t.created_at,
   }));
   const rounds: AdminRound[] = ctx.rounds(ev.id).map((r) => ({
-    id: r.id, level: r.level, name: r.name, kind: r.kind, status: r.status, config: ctx.roundConfig(r), instructions: r.instructions,
+    id: r.id, level: r.level, name: r.name, kind: r.kind, status: r.status, config: ctx.roundConfig(r), instructions: r.instructions, liveIndex: r.live_index, livePhase: r.live_phase,
     challenges: ctx.challenges(r.id).map(adminChallenge), startedAt: r.started_at, endedAt: r.ended_at,
     deadlineAt: r.status === 'running' ? r.deadline_at : null, remainingMs: remainingAt(ctx.timer(r), now), answersRevealed: r.answers_revealed === 1,
   }));

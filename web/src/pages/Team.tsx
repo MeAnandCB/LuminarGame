@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { C2S } from '../../../shared/contract';
 import type { AnswerResult, PublicState, TeamState } from '../../../shared/types';
 import { ApiFailure, api, errMsg, newRequestId } from '../lib/api';
 import { fmtClock, remaining, useLive, useServerNow, type Live } from '../lib/realtime';
+import { submitAnswer } from '../lib/submit';
 import { ConnBadge, ErrorBanner, Leaderboard, Spinner } from '../components/ui';
+import { LivePlay } from './team/LivePlay';
+import { OptionButtons } from '../components/OptionButtons';
 
 type Boot = 'loading' | 'anon' | 'in';
 
@@ -239,14 +241,20 @@ function Screen({ team, pub, live, now }: { team: TeamState; pub: PublicState | 
       <Card title={round.name} icon="🚀" level={round.level}>
         <p className="text-lg">{round.instructions}</p>
         <ul className="mt-4 list-disc space-y-1 pl-5 text-muted">
-          <li>{round.total} {round.level === 1 ? 'questions' : 'stages'} · {Math.round(round.durationMs / 60000)} minutes</li>
+          <li>{round.total} questions · {round.kind === 'quiz' ? `${Math.round(round.durationMs / 60000)} minutes, at your own pace` : 'live - everyone answers the same question together'}</li>
           <li>Both teammates can read the screen – only one phone needs to answer.</li>
         </ul>
         <p className="mt-4 font-bold text-neon">Waiting for the host to press start…</p>
       </Card>
     );
   }
-  if (st === 'ROUND_RUNNING' || st === 'ROUND_PAUSED') return <Play team={team} round={round} live={live} now={now} paused={st === 'ROUND_PAUSED'} />;
+  if (st === 'ROUND_RUNNING' || st === 'ROUND_PAUSED') {
+    return round.kind === 'quiz' ? (
+      <Play team={team} round={round} live={live} now={now} paused={st === 'ROUND_PAUSED'} />
+    ) : (
+      <LivePlay team={team} pub={pub!} round={round} live={live} now={now} paused={st === 'ROUND_PAUSED'} />
+    );
+  }
 
   // ROUND_ENDED
   return <Between team={team} pub={pub} />;
@@ -266,8 +274,10 @@ function Card({ title, icon, children, level }: { title: string; icon: string; c
 const OUTCOME_UI: Record<AnswerResult['outcome'], { icon: string; label: string; cls: string }> = {
   correct: { icon: '✔', label: 'Correct', cls: 'border-ok bg-[#052e16] text-[#bbf7d0]' },
   incorrect: { icon: '✘', label: 'Incorrect', cls: 'border-bad bg-[#3b0a1c] text-[#ffd5dc]' },
-  late: { icon: '⏱', label: "Too late", cls: 'border-warn bg-[#3b2a05] text-[#fde68a]' },
+  late: { icon: '⏱', label: 'Too late', cls: 'border-warn bg-[#3b2a05] text-[#fde68a]' },
   rejected: { icon: '⚠', label: 'Not accepted', cls: 'border-warn bg-[#3b2a05] text-[#fde68a]' },
+  locked: { icon: '🔒', label: 'Locked in', cls: 'border-neon bg-[#06232c] text-[#a5f3fc]' },
+  skipped: { icon: '⏭', label: 'Skipped', cls: 'border-line bg-panel2 text-text' },
 };
 
 function Play({ team, round, live, now, paused }: { team: TeamState; round: NonNullable<PublicState['round']>; live: Live; now: number; paused: boolean }) {
@@ -277,6 +287,7 @@ function Play({ team, round, live, now, paused }: { team: TeamState; round: NonN
   const [result, setResult] = useState<AnswerResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<{ text: string; note: string } | null>(null);
+  const [confirmSkip, setConfirmSkip] = useState(false);
   const lastChallenge = useRef<number | null>(null);
   const left = remaining(round, now);
 
@@ -286,36 +297,31 @@ function Play({ team, round, live, now, paused }: { team: TeamState; round: NonN
       setValue('');
       setError(null);
       setHint(null);
+      setConfirmSkip(false);
     }
   }, [ch]);
-
-  const sendViaSocket = (payload: object) =>
-    new Promise<AnswerResult>((resolve, reject) => {
-      const s = live.socketRef.current;
-      if (!s?.connected) return reject(new Error('offline'));
-      s.timeout(4000).emit(C2S.submitAnswer, payload, (err: Error | null, ack: { ok: boolean; result?: AnswerResult; error?: { code: string; message: string } }) => {
-        if (err) return reject(err);
-        if (ack.ok && ack.result) return resolve(ack.result);
-        reject(new ApiFailure(0, ack.error?.code ?? 'ERROR', ack.error?.message ?? 'Rejected.'));
-      });
-    });
 
   async function submit(answer: string) {
     if (!ch || busy) return;
     setBusy(true);
     setError(null);
     setResult(null);
-    const payload = { requestId: newRequestId(), answer, challengeId: ch.id };
     try {
-      let res: AnswerResult;
-      try {
-        res = await sendViaSocket(payload);
-      } catch (e) {
-        if (e instanceof ApiFailure) throw e;
-        res = await api<AnswerResult>('POST', '/team/answer', payload); // same requestId: safe to retry
-      }
-      setResult(res);
-      if (res.outcome !== 'correct') setValue(res.advanced ? '' : value);
+      setResult(await submitAnswer(live.socketRef.current, { requestId: newRequestId(), answer, challengeId: ch.id }));
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function skip() {
+    if (!ch || busy) return;
+    setBusy(true);
+    setError(null);
+    setConfirmSkip(false);
+    try {
+      setResult(await api<AnswerResult>('POST', '/team/skip', { requestId: newRequestId(), challengeId: ch.id }));
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -339,7 +345,7 @@ function Play({ team, round, live, now, paused }: { team: TeamState; round: NonN
   if (team.progress.finished || !ch) {
     return (
       <Card title="Round complete!" icon="🎉" level={round.level}>
-        <p>You finished all {team.progress.total} {round.level === 1 ? 'questions' : 'stages'}. Time left on the clock: <strong className="tnum">{fmtClock(left)}</strong>.</p>
+        <p>You went through all {team.progress.total} questions. Time left on the clock: <strong className="tnum">{fmtClock(left)}</strong>.</p>
         <p className="mt-2 text-muted">Wait for the host to end the round and reveal the results.</p>
       </Card>
     );
@@ -348,11 +354,11 @@ function Play({ team, round, live, now, paused }: { team: TeamState; round: NonN
   const timeUp = left <= 0 && !paused;
 
   return (
-    <section data-level={round.level} className="flex flex-col gap-3" aria-label="Current challenge">
+    <section data-level={round.level} className="flex flex-col gap-3" aria-label="Current question">
       <div className="panel flex items-center justify-between gap-3 px-4 py-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-widest text-[var(--accent)]">Level {round.level}</p>
-          <p className="font-bold">{round.level === 1 ? 'Question' : 'Stage'} {ch.position + 1} of {ch.total}</p>
+          <p className="text-xs font-bold uppercase tracking-widest text-[var(--accent)]">Level {round.level} · Quick Brain</p>
+          <p className="font-bold">Question {ch.position + 1} of {ch.total}</p>
         </div>
         <div className="text-right" role="timer" aria-label={`Time remaining ${fmtClock(left)}`}>
           <p className={`mono text-3xl font-black ${left < 30000 && !paused ? 'text-bad' : 'text-text'}`}>{fmtClock(left)}</p>
@@ -380,40 +386,15 @@ function Play({ team, round, live, now, paused }: { team: TeamState; round: NonN
             </div>
           )}
           {error && <ErrorBanner>{error}</ErrorBanner>}
-          {round.level !== 1 && team.solved.length > 0 && (
-            <details className="panel px-4 py-2">
-              <summary className="cursor-pointer py-2 font-semibold">Solved so far ({team.solved.length})</summary>
-              <ul className="mb-2 space-y-1">
-                {team.solved.map((s) => (
-                  <li key={s.position} className="flex justify-between gap-3 text-sm"><span className="text-muted">{s.title}</span><span className="mono font-bold text-ok">{s.answer}</span></li>
-                ))}
-              </ul>
-            </details>
-          )}
           <article className="panel glow p-4">
             <h2 className="text-lg font-black text-[var(--accent)]">{ch.title}</h2>
             <p className="prompt mt-2 text-base">{ch.prompt}</p>
-            <p className="mt-3 text-xs text-muted">Worth {ch.points} points{round.level === 1 ? ' · one answer only' : ' · unlimited tries'}</p>
+            <p className="mt-3 text-xs text-muted">Worth {ch.points} points · one answer only</p>
           </article>
 
-          <form
-            onSubmit={(e) => { e.preventDefault(); if (ch.kind !== 'choice') void submit(value); }}
-            className="flex flex-col gap-3"
-          >
+          <form onSubmit={(e) => { e.preventDefault(); if (ch.kind !== 'choice') void submit(value); }} className="flex flex-col gap-3">
             {ch.kind === 'choice' && ch.options ? (
-              <div role="radiogroup" aria-label="Answer options" className="grid gap-2">
-                {ch.options.map((o) => (
-                  <button
-                    type="button" key={o.id} role="radio" aria-checked={value === o.id}
-                    onClick={() => setValue(o.id)}
-                    className={`btn !justify-start !min-h-14 text-left text-lg ${value === o.id ? 'btn-primary' : 'btn-ghost'}`}
-                  >
-                    <span aria-hidden="true" className="mono grid h-8 w-8 shrink-0 place-items-center rounded-md border border-current">{o.id.toUpperCase()}</span>
-                    <span>{o.text}</span>
-                    {value === o.id && <span className="ml-auto" aria-hidden="true">✔</span>}
-                  </button>
-                ))}
-              </div>
+              <OptionButtons options={ch.options} value={value} onChange={setValue} />
             ) : (
               <div>
                 <label className="lbl" htmlFor="ans">Your answer</label>
@@ -424,13 +405,20 @@ function Play({ team, round, live, now, paused }: { team: TeamState; round: NonN
                 />
               </div>
             )}
-            <button
-              type={ch.kind === 'choice' ? 'button' : 'submit'}
-              onClick={ch.kind === 'choice' ? () => void submit(value) : undefined}
-              className="btn btn-primary !min-h-14 text-lg" disabled={busy || !value.trim() || timeUp}
-            >
-              {busy ? 'Sending…' : timeUp ? "Time's up" : round.level === 1 ? 'Lock in answer' : 'Submit code'}
+            <button type={ch.kind === 'choice' ? 'button' : 'submit'} onClick={ch.kind === 'choice' ? () => void submit(value) : undefined} className="btn btn-primary !min-h-14 text-lg" disabled={busy || !value.trim() || timeUp}>
+              {busy ? 'Sending…' : timeUp ? "Time's up" : 'Lock in answer'}
             </button>
+            {team.canSkip && (
+              confirmSkip ? (
+                <div className="flex items-center gap-2 rounded-xl border border-line p-3" role="group" aria-label="Confirm skip">
+                  <span className="flex-1 text-sm">Skip this question? It scores nothing and you cannot come back.</span>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmSkip(false)}>Keep</button>
+                  <button type="button" className="btn btn-violet btn-sm" disabled={busy} onClick={() => void skip()}>Skip it</button>
+                </div>
+              ) : (
+                <button type="button" className="btn btn-ghost" disabled={busy || timeUp} onClick={() => setConfirmSkip(true)}>⏭ Skip question</button>
+              )
+            )}
           </form>
 
           {team.hint?.available && (
@@ -467,13 +455,14 @@ function Between({ team, pub }: { team: TeamState; pub: PublicState | null }) {
           <ol className="space-y-2">
             {team.history.map((h) => {
               const correct = reveal?.find((r) => r.position === h.position)?.answer;
+              const label = h.outcome === 'correct' ? '✔ Correct' : h.outcome === 'skipped' ? '⏭ Skipped' : '✘ Incorrect';
               return (
                 <li key={h.position} className="rounded-lg bg-panel2 px-3 py-2 text-sm">
                   <div className="flex justify-between gap-2">
                     <span className="font-semibold">{h.position + 1}. {h.title}</span>
-                    <span className={h.outcome === 'correct' ? 'text-ok' : 'text-bad'}>{h.outcome === 'correct' ? '✔ Correct' : '✘ Incorrect'} · {h.points}</span>
+                    <span className={h.outcome === 'correct' ? 'text-ok' : h.outcome === 'skipped' ? 'text-muted' : 'text-bad'}>{label} · {h.points}</span>
                   </div>
-                  <div className="text-muted">You answered: {h.yourAnswer || '–'}{correct && h.outcome !== 'correct' ? ` · Correct: ${correct}` : ''}</div>
+                  <div className="text-muted">{h.outcome === 'skipped' ? 'You skipped this question' : `You answered: ${h.yourAnswer || '–'}`}{correct && h.outcome !== 'correct' ? ` · Correct: ${correct}` : ''}</div>
                 </li>
               );
             })}

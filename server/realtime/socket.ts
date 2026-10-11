@@ -3,7 +3,7 @@ import { Server, type Socket } from 'socket.io';
 import { C2S, S2C, type Announcement, type TimerSync } from '../../shared/contract.js';
 import { AppError, type ChangeSignal, type Ctx, type TeamRow } from '../engine/context.js';
 import * as events from '../engine/events.js';
-import * as play from '../engine/play.js';
+import * as play from '../games/index.js';
 import { computeStandings } from '../engine/standings.js';
 import { resolveTeamSession } from '../engine/teams.js';
 import { adminState, publicState, teamState } from '../engine/views.js';

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { parseRoundConfig } from '../game/scoring.js';
+import { isLive, liveDurationSec, parseRoundConfig } from '../game/scoring.js';
 import { AppError, type Ctx, type TeamRow } from './context.js';
-import { award } from './play.js';
+import { award } from '../games/shared.js';
 import { computeStandings, qualificationVisible, writeSnapshot } from './standings.js';
 import type { RoundConfig } from '../../shared/types.js';
 
@@ -29,7 +29,9 @@ export function updateRoundConfig(ctx: Ctx, actor: string, level: number, patch:
   const round = ctx.rounds(ev.id).find((r) => r.level === level);
   if (!round) throw new AppError(404, 'NO_ROUND', 'Unknown level.');
   if (round.status !== 'pending') throw new AppError(409, 'LOCKED', 'Scoring and timers cannot change once a round has started.');
-  const next = parseRoundConfig({ ...ctx.roundConfig(round), ...patch });
+  const merged = { ...ctx.roundConfig(round), ...patch };
+  if (isLive(round.kind)) merged.durationSec = liveDurationSec(ctx.challenges(round.id).length, merged);
+  const next = parseRoundConfig(round.kind, merged);
   ctx.db.tx(() => {
     ctx.db.run('UPDATE rounds SET config = ? WHERE id = ?', JSON.stringify(next), round.id);
     ctx.audit(ev.id, actor, 'round.configure', { level, patch });

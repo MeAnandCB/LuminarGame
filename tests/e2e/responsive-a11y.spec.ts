@@ -90,7 +90,7 @@ test('layouts have no horizontal overflow and pass automated accessibility check
     await ctx.close();
   }
 
-  // keyboard-only answer: tab to an option, select with Space, submit with Enter
+  // keyboard-only answer: tab to an option, select with Space
   const kb = first.page;
   await kb.reload();
   await kb.getByRole('radio').first().focus();
@@ -102,6 +102,62 @@ test('layouts have no horizontal overflow and pass automated accessibility check
   const anim = await kb.evaluate(() => getComputedStyle(document.querySelector('article')!).animationName);
   expect(anim).toBe('none');
 
+  // ---- Level 2 (live) with 20 teams: projector, phone and keyboard ---------------------------
+  await api.patch('/round/2/config', { questionSec: 120 }); // keep the question open while the checks run
+  await api.post('/round/end');
+  await api.post('/round/prepare');
+  await api.post('/round/start');
+  await expect(kb.getByText(/Reel Rush/).first()).toBeVisible();
+  for (const vp of VIEWPORTS) {
+    const dctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height } });
+    const d = await dctx.newPage();
+    await d.goto('/display');
+    await expect(d.getByRole('list', { name: 'Answer options' }).getByRole('listitem')).toHaveCount(4);
+    await expect(d.locator('tbody tr')).toHaveCount(20);
+    await noHorizontalOverflow(d);
+    if (vp.name === 'projector-1920') {
+      const h = await d.evaluate(() => ({ sh: document.documentElement.scrollHeight, ch: document.documentElement.clientHeight }));
+      expect(h.sh, 'live projector view scrolls vertically').toBeLessThanOrEqual(h.ch + 2);
+      await axe(d, 'display live question');
+    }
+    await dctx.close();
+  }
+  await expect(kb.getByRole('radio').first()).toBeVisible();
+  await noHorizontalOverflow(kb);
+  const live = (await (await kb.request.get('/api/team/me')).json()).live;
+  expect(live.doubleAvailable).toBe(true);
+  // keyboard: choose an option with the arrow-free Space key, then lock in with Enter on the button
+  await kb.getByRole('radio').nth(1).focus();
+  await kb.keyboard.press('Space');
+  await kb.getByRole('button', { name: 'Lock in answer' }).focus();
+  await kb.keyboard.press('Enter');
+  await expect(kb.getByText(/Answer locked in/)).toBeVisible();
+  await axe(kb, 'team live locked');
+  await api.post('/round/live/advance'); // close the question -> reveal
+  await expect(kb.getByRole('status').filter({ hasText: /Correct answer|Wrong answer|No answer|Correct!/ }).first()).toBeVisible();
+  await noHorizontalOverflow(kb);
+  const dctx2 = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const rv = await dctx2.newPage();
+  await rv.goto('/display');
+  await expect(rv.getByText('Correct answer').first()).toBeVisible();
+  const h2 = await rv.evaluate(() => ({ sh: document.documentElement.scrollHeight, ch: document.documentElement.clientHeight }));
+  expect(h2.sh, 'projector reveal view scrolls vertically').toBeLessThanOrEqual(h2.ch + 2);
+  await axe(rv, 'display live reveal');
+  await dctx2.close();
+
+  // phones at small sizes in the live game
+  for (const vp of VIEWPORTS.slice(0, 2)) {
+    const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, isMobile: true, hasTouch: true });
+    const resp = await ctx.request.post('/api/team/link', { data: { pin, code: (await (await first.page.request.get('/api/team/me')).json()).team.code } });
+    expect(resp.status()).toBe(201);
+    const p = await ctx.newPage();
+    await p.goto('/');
+    await expect(p.getByText(/Question \d+ of 12/)).toBeVisible();
+    await noHorizontalOverflow(p);
+    if (vp.name === 'phone-320') await axe(p, 'team live reveal');
+    await ctx.close();
+  }
+
   // admin dashboard on laptop and tablet
   for (const vp of [VIEWPORTS[3]!, VIEWPORTS[2]!]) {
     const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height } });
@@ -111,6 +167,7 @@ test('layouts have no horizontal overflow and pass automated accessibility check
     await p.getByLabel('Password').fill(ADMIN.password);
     await p.getByRole('button', { name: 'Sign in' }).click();
     await expect(p.getByTestId('event-state')).toHaveText('ROUND RUNNING');
+    await expect(p.getByTestId('live-status')).toBeVisible();
     await noHorizontalOverflow(p);
     if (vp.name === 'laptop-1280') await axe(p, 'admin control');
     for (const tab of ['Teams', 'Rounds & scoring', 'Leaderboard', 'Audit log', 'Event']) {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { C2S } from '../../shared/contract.js';
 import type { AnswerResult } from '../../shared/types.js';
 import { SEED_ROUNDS } from '../../server/content/seed.js';
+import { MIGRATIONS } from '../../server/db/migrations.js';
 import { TeamClient, adminClient, adminState, boot, connectSocket, correct, setupEvent, sleep, waitFor, type Booted } from './helpers.js';
 
 let b: Booted;
@@ -208,7 +209,7 @@ describe('persistence and recovery', () => {
     await b.close();
     b = await boot({ dbPath, clock });
     expect(b.h.ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM teams')!.n).toBe(1);
-    expect(b.h.ctx.db.all('SELECT * FROM schema_migrations')).toHaveLength(1);
+    expect(b.h.ctx.db.all('SELECT * FROM schema_migrations')).toHaveLength(MIGRATIONS.length);
   });
 
   it('tolerates a stale tab left open after the event ended', async () => {

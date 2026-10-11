@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { SEED_ROUNDS } from '../../server/content/seed.js';
-import { TeamClient, adminState, boot, correct, setupEvent, wrong, type Booted, type Client } from './helpers.js';
+import { TeamClient, adminState, boot, correct, playLive, setupEvent, wrong, type Booted, type Client } from './helpers.js';
 
 let b: Booted;
 afterEach(async () => {
@@ -27,11 +27,6 @@ async function playLevel1(t: TeamClient, upTo = 12, wrongAt: number[] = []) {
 async function runLevel(admin: Client) {
   await admin.post('/api/admin/round/prepare');
   await admin.post('/api/admin/round/start');
-}
-
-async function playPuzzle(t: TeamClient, level: number) {
-  const n = SEED_ROUNDS[level - 1]!.challenges.length;
-  for (let i = 0; i < n; i++) expect((await t.answer(correct(level, i))).json.outcome).toBe('correct');
 }
 
 describe('Level 1 - Quick Brain', () => {
@@ -170,174 +165,121 @@ describe('Level 1 - Quick Brain', () => {
   });
 });
 
-describe('Level 2 - Codebreaker', () => {
-  async function toLevel2(teams = 1) {
-    const env = await toLobby({ teams });
-    await runLevel(env.admin);
-    await env.admin.post('/api/admin/round/end');
-    await runLevel(env.admin);
-    return env;
-  }
-
-  it('incorrect codes never advance; the correct code advances exactly once', async () => {
+describe('Level 1 - skip and hints', () => {
+  it('a team can skip a question: no points, no penalty, and the skip is idempotent', async () => {
     b = await boot();
-    const { teams } = await toLevel2();
+    const { admin, teams } = await toLobby({ teams: 1 });
+    await admin.patch('/api/admin/round/1/config', { wrongPenalty: 50 });
+    await runLevel(admin);
     const t = teams[0]!;
-    for (let i = 0; i < 3; i++) {
-      const r = await t.answer('NOPE');
-      expect(r.json).toMatchObject({ outcome: 'incorrect', advanced: false, points: 0 });
-    }
-    expect((await t.me()).progress!.position).toBe(0);
-    const ok = await t.answer('m'); // case-insensitive
-    expect(ok.json).toMatchObject({ outcome: 'correct', advanced: true, points: 200 });
-    const dup = await t.answer('M', { requestId: 'other-req-0001' }); // now stage 2 is active; "M" is wrong there
-    expect(dup.json.outcome).toBe('incorrect');
-    expect((await t.me()).progress!.position).toBe(1);
-    expect(ledgerRows(t.state.team.id, 'answer')).toHaveLength(1);
+    const first = await t.skip({ requestId: 'skip-request-01' });
+    expect(first.json).toMatchObject({ outcome: 'skipped', points: 0, advanced: true });
+    const again = await t.skip({ requestId: 'skip-request-01' });
+    expect(again.json.duplicate).toBe(true);
+    const me = await t.me();
+    expect(me.progress!.position).toBe(1); // skipped once, not twice
+    expect(me.score.total).toBe(0);
+    expect(ledgerRows(me.team.id)).toHaveLength(0);
+    expect(me.history[0]).toMatchObject({ outcome: 'skipped', position: 0 });
+    // a stale skip for an old question is refused
+    const ids = b.h.ctx.db.all<{ id: number }>('SELECT c.id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE r.level = 1 ORDER BY position').map((r) => r.id);
+    expect((await t.skip({ challengeId: ids[0] })).status).toBe(409);
+    // the next question can still be answered normally
+    expect((await t.answer(correct(1, 1))).json.outcome).toBe('correct');
   });
 
-  it('stages cannot be skipped or replayed', async () => {
+  it('skipping can be switched off by the host, and works until the end of the quiz', async () => {
     b = await boot();
-    const { teams } = await toLevel2();
+    const { admin, teams } = await toLobby({ teams: 1 });
+    await admin.patch('/api/admin/round/1/config', { allowSkip: false });
+    await runLevel(admin);
+    const r = await teams[0]!.skip();
+    expect(r.status).toBe(403);
+    expect(r.json.error?.code).toBe('SKIP_DISABLED');
+  });
+
+  it('skipping every question finishes the round with zero points', async () => {
+    b = await boot();
+    const { admin, teams } = await toLobby({ teams: 1 });
+    await runLevel(admin);
+    for (let i = 0; i < 12; i++) expect((await teams[0]!.skip()).json.outcome).toBe('skipped');
+    const me = await teams[0]!.me();
+    expect(me.progress!.finished).toBe(true);
+    expect(me.score.total).toBe(0);
+    expect((await teams[0]!.skip()).status).toBe(409);
+  });
+
+  it('hints cost points once per question when the host enables them', async () => {
+    b = await boot();
+    const { admin, teams } = await toLobby({ teams: 1 });
+    const id = b.h.ctx.db.get<{ id: number }>('SELECT c.id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE r.level = 1 AND position = 0')!.id;
+    await admin.patch(`/api/admin/challenges/${id}`, { hint: 'Think of Mohanlal and a cable operator.' });
+    await admin.patch('/api/admin/round/1/config', { hintsEnabled: true, hintPenalty: 30 });
+    await runLevel(admin);
     const t = teams[0]!;
-    const ids = b.h.ctx.db.all<{ id: number }>('SELECT c.id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE r.level = 2 ORDER BY position').map((r) => r.id);
-    const skip = await t.answer(correct(2, 4), { challengeId: ids[4] });
-    expect(skip.json.outcome).toBe('rejected');
-    expect(skip.json.message).toMatch(/locked/i);
-    await t.answer(correct(2, 0));
-    const replay = await t.answer(correct(2, 0), { challengeId: ids[0] });
-    expect(replay.json.outcome).toBe('rejected');
-    expect((await t.me()).score.total).toBe(200);
+    const rs = await Promise.all([t.hint(), t.hint(), t.hint()]);
+    expect(rs.every((r) => r.status === 200)).toBe(true);
+    expect(rs.filter((r) => r.json.penaltyApplied === 30)).toHaveLength(1);
+    expect((await t.me()).score.total).toBe(-30);
   });
 
-  it('concurrent duplicate submissions of the same stage score once', async () => {
+  it('hints are off by default in Level 1', async () => {
     b = await boot();
-    const { teams } = await toLevel2();
-    const t = teams[0]!;
-    const id = b.h.ctx.db.get<{ id: number }>('SELECT c.id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE r.level = 2 AND position = 0')!.id;
-    const rs = await Promise.all(Array.from({ length: 15 }, (_, i) => t.answer('M', { requestId: `burst-req-${i}`, challengeId: id })));
-    expect(rs.filter((r) => r.json.outcome === 'correct')).toHaveLength(1);
-    expect((await t.me()).score.total).toBe(200);
-    expect(ledgerRows(t.state.team.id)).toHaveLength(1);
-  });
-
-  it('awards stage points, time bonus and the vault password completes the round', async () => {
-    b = await boot();
-    const { teams } = await toLevel2();
-    await playPuzzle(teams[0]!, 2);
-    const s = await teams[0]!.me();
-    // 200*3 + 300 + 500 stage points, + full time bonus (clock never moved)
-    expect(s.score.total).toBe(1600);
-    expect(s.progress!.finished).toBe(true);
-    expect(ledgerRows(s.team.id, 'time_bonus')).toEqual([{ kind: 'time_bonus', points: 200 }]);
-  });
-
-  it('time bonus shrinks as the round progresses', async () => {
-    b = await boot();
-    const { teams } = await toLevel2();
-    b.clock.advance(450_000); // half of 900 s
-    await playPuzzle(teams[0]!, 2);
-    expect(ledgerRows(teams[0]!.state.team.id, 'time_bonus')).toEqual([{ kind: 'time_bonus', points: 100 }]);
-  });
-
-  it('hint penalty is charged once per stage, even with retries and parallel requests', async () => {
-    b = await boot();
-    const { teams } = await toLevel2();
-    const t = teams[0]!;
-    const rs = await Promise.all([t.hint(), t.hint(), t.hint(), t.hint()]);
-    expect(rs.every((r) => r.status === 200 && typeof r.json.text === 'string')).toBe(true);
-    expect(rs.filter((r) => r.json.penaltyApplied === 50)).toHaveLength(1);
-    expect(ledgerRows(t.state.team.id, 'hint_penalty')).toHaveLength(1);
-    expect((await t.me()).score.total).toBe(-50);
-    expect((await t.me()).hint).toMatchObject({ used: true });
-    await t.answer(correct(2, 0));
-    expect((await t.hint()).json.penaltyApplied).toBe(50); // a new stage costs again
-    expect((await t.me()).score.total).toBe(200 - 100);
-  });
-
-  it('hints respect the host configuration', async () => {
-    b = await boot();
-    const env = await toLobby({ teams: 1 });
-    await env.admin.patch('/api/admin/round/2/config', { hintsEnabled: false });
-    await runLevel(env.admin);
-    expect((await env.teams[0]!.hint()).status).toBe(403); // hints are off in level 1
-    await env.admin.post('/api/admin/round/end');
-    await runLevel(env.admin);
-    const r = await env.teams[0]!.hint();
+    const { admin, teams } = await toLobby({ teams: 1 });
+    await runLevel(admin);
+    const r = await teams[0]!.hint();
     expect(r.status).toBe(403);
     expect(r.json.error.code).toBe('HINTS_DISABLED');
   });
-
-  it('progress survives refresh and reconnects to a different session', async () => {
-    b = await boot();
-    const { teams } = await toLevel2();
-    await teams[0]!.answer(correct(2, 0));
-    await teams[0]!.answer(correct(2, 1));
-    const phone2 = new TeamClient(b.base);
-    const linked = await phone2.post('/api/team/link', { pin: (await adminState(await (await import('./helpers.js')).adminClient(b))).event.pin, code: teams[0]!.state.team.code });
-    expect(linked.status).toBe(201);
-    const s = await phone2.me();
-    expect(s.progress!.position).toBe(2);
-    expect(s.challenge!.position).toBe(2);
-    expect(s.solved.map((x) => x.answer)).toEqual(['M', 'QVMJ']);
-    // both devices submitting the same stage still only score once
-    const [x, y] = await Promise.all([teams[0]!.answer('42'), phone2.answer('42')]);
-    expect([x.json.outcome, y.json.outcome].filter((o) => o === 'correct')).toHaveLength(1);
-    expect((await phone2.me()).score.total).toBe(600);
-  });
 });
 
-describe('qualification, Level 3 and finalisation', () => {
-  it('full event: qualification freezes, only finalists play, podium + CSV are consistent', async () => {
+describe('qualification and finalisation', () => {
+  it('full event: Reel Rush ranks, qualification freezes, only finalists play the Showdown, podium + CSV are consistent', async () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 7, settings: { finalists: 3 } });
     // Level 1: team i answers (12 - i) questions correctly -> descending totals
     await runLevel(admin);
-    for (let i = 0; i < teams.length; i++) await playLevel1(teams[i]!, 12 - i * 1);
+    for (let i = 0; i < teams.length; i++) await playLevel1(teams[i]!, 12 - i);
     await admin.post('/api/admin/round/end');
-    // Level 2: only some teams finish
+    // Level 2 (live): Team 7 and Team 6 get everything right, the rest answer nothing
     await runLevel(admin);
-    await playPuzzle(teams[6]!, 2); // last place in L1 jumps ahead with a perfect L2
-    await playPuzzle(teams[5]!, 2);
-    await admin.post('/api/admin/round/end');
+    await playLive(admin, teams, (i) => (i >= 5 ? 'LIVE_CORRECT' : null), 2);
+    expect((await adminState(admin)).event.state).toBe('ROUND_ENDED');
 
     // finalists cannot be prepared without qualification
     const early = await admin.post('/api/admin/round/prepare');
     expect(early.status).toBe(409);
     expect(early.json.error.code).toBe('QUALIFICATION_REQUIRED');
 
-    const q = await admin.post('/api/admin/qualification/open');
-    expect(q.status).toBe(200);
+    expect((await admin.post('/api/admin/qualification/open')).status).toBe(200);
     const s = await adminState(admin);
     expect(s.event.state).toBe('QUALIFICATION');
     const finalists = s.leaderboard.filter((r) => r.qualified).map((r) => r.name);
     expect(finalists).toHaveLength(3);
-    expect(finalists).toEqual(expect.arrayContaining(['Team 7', 'Team 6'])); // the two perfect L2 runs
+    expect(finalists).toEqual(expect.arrayContaining(['Team 7', 'Team 6'])); // the two perfect Level 2 runs
     expect(s.leaderboard.slice(0, 3).map((r) => r.qualified)).toEqual([true, true, true]);
 
-    // host changes the number of finalists; qualification recomputed
+    // host changes the number of finalists; qualification is recomputed
     expect((await admin.patch('/api/admin/event', { settings: { finalists: 4 } })).status).toBe(200);
     expect((await adminState(admin)).leaderboard.filter((r) => r.qualified)).toHaveLength(4);
     await admin.patch('/api/admin/event', { settings: { finalists: 3 } });
 
     await runLevel(admin);
-    // frozen once level 3 starts
+    // frozen once Level 3 starts
     expect((await adminState(admin)).event.qualificationFrozen).toBe(true);
     expect((await admin.patch('/api/admin/event', { settings: { finalists: 5 } })).status).toBe(409);
     expect((await admin.post('/api/admin/qualification/open')).status).toBe(409);
 
     const finalistTeams = teams.filter((t) => finalists.includes(t.state.team.name));
     const outsider = teams.find((t) => !finalists.includes(t.state.team.name))!;
-    const blocked = await outsider.answer('PREMAM');
+    const blocked = await outsider.answer('a');
     expect(blocked.status).toBe(403);
     expect(blocked.json.error?.code).toBe('NOT_ELIGIBLE');
     expect((await outsider.me()).eligible).toBe(false);
 
-    // Level 3 game: the final password must depend on clues; guessing it early fails
-    const f0 = finalistTeams[0]!;
-    expect((await f0.answer('MOHANLAL-231-PRE')).json.outcome).toBe('incorrect');
-    for (const t of finalistTeams) await playPuzzle(t, 3);
-    await admin.post('/api/admin/round/end');
+    // Showdown: the first finalist is perfect, the others are wrong on question 1 only
+    await playLive(admin, finalistTeams, (i, q) => (i === 0 || q > 0 ? 'LIVE_CORRECT' : 'LIVE_WRONG'), 3);
+    expect((await adminState(admin)).event.state).toBe('ROUND_ENDED');
     await admin.post('/api/admin/event/complete');
 
     const end = await adminState(admin);
@@ -345,7 +287,6 @@ describe('qualification, Level 3 and finalisation', () => {
     const pub = (await new TeamClient(b.base).get('/api/public/state')).json;
     expect(pub.podium).toHaveLength(3);
     expect(pub.podium.map((r: { rank: number }) => r.rank)).toEqual([1, 2, 3]);
-    // podium rows are the finalists, ordered by total desc
     const totals = pub.podium.map((r: { total: number }) => r.total);
     expect([...totals].sort((a, c) => c - a)).toEqual(totals);
     expect(pub.podium.every((r: { qualified: boolean }) => r.qualified)).toBe(true);
@@ -356,17 +297,15 @@ describe('qualification, Level 3 and finalisation', () => {
       const snap = b.h.ctx.db.get<{ total_points: number; rank: number }>("SELECT total_points, rank FROM leaderboard_snapshots WHERE scope = 'final' AND team_id = ?", row.teamId)!;
       expect(snap).toMatchObject({ total_points: row.total, rank: row.rank });
     }
-    // finalists strictly occupy the top ranks
-    expect(end.leaderboard.slice(0, 3).every((r) => r.qualified)).toBe(true);
+    expect(end.leaderboard.slice(0, 3).every((r) => r.qualified)).toBe(true); // finalists strictly occupy the top ranks
 
     const csv = await admin.get('/api/admin/export.csv');
     expect(csv.status).toBe(200);
-    const lines = csv.text.replace('﻿', '').trim().split('\r\n');
+    const lines = csv.text.replace('\ufeff', '').trim().split('\r\n');
     expect(lines[0]).toBe('Rank,Team,Player 1,Player 2,Level 1 points,Level 2 points,Level 3 points,Unassigned adjustments,Total,Challenges solved,Finalist,Tied on all criteria');
     expect(lines).toHaveLength(8);
     for (const row of end.leaderboard) {
-      const line = lines.find((l) => l.split(',')[1] === row.name)!;
-      const cells = line.split(',');
+      const cells = lines.find((l) => l.split(',')[1] === row.name)!.split(',');
       expect(Number(cells[0])).toBe(row.rank);
       expect(Number(cells[8])).toBe(row.total);
     }
@@ -384,8 +323,7 @@ describe('qualification, Level 3 and finalisation', () => {
     expect((await adminState(admin)).leaderboard.filter((r) => r.qualified)).toHaveLength(1);
     await admin.post('/api/admin/round/prepare'); // level 3 ready
     expect((await adminState(admin)).event.state).toBe('ROUND_READY');
-    const reopen = await admin.post('/api/admin/qualification/open');
-    expect(reopen.status).toBe(200);
+    expect((await admin.post('/api/admin/qualification/open')).status).toBe(200);
     expect((await adminState(admin)).event.state).toBe('QUALIFICATION');
     await admin.patch('/api/admin/event', { settings: { finalists: 2 } });
     expect((await adminState(admin)).leaderboard.filter((r) => r.qualified)).toHaveLength(2);
