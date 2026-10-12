@@ -1,7 +1,8 @@
 /**
  * Single ranking rule used by the backend, admin dashboard, projector, CSV and podium.
  *
- *  0. Tier: finalists rank above non-finalists once the final level has been reached.
+ *  0. Tier (lower is better): 0 = finalist still standing, 1 = finalist eliminated in the Final
+ *     Showdown (lost every life), 2 = non-finalist. So "last team standing" outranks raw points.
  *  1. Highest total score.
  *  2. Highest score in the focus level (the most recently played level).
  *  3. Greatest number of correctly solved challenges.

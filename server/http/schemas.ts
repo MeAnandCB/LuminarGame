@@ -90,5 +90,8 @@ export const configPatchSchema = z
 
 export const challengePatchSchema = z.object({ points: z.number().int().min(0).max(5000).optional(), hint: z.string().max(300).nullable().optional() }).strict();
 
+/** `expect` is the question and phase the coordinator was looking at; a click on a stale screen is ignored instead of skipping a phase. */
+export const liveAdvanceSchema = z.object({ expect: z.object({ index: z.number().int().min(0), phase: z.enum(['open', 'reveal']) }).optional() }).strict();
+
 export const resetSchema = z.object({ confirm: z.literal('RESET') });
 export const revealSchema = z.object({ reveal: z.boolean() });

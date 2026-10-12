@@ -207,11 +207,13 @@ export function adminState(ctx: Ctx): AdminState | null {
   const audit: AuditEntry[] = ctx.db
     .all<{ id: number; actor: string; action: string; details: string; created_at: string }>('SELECT id, actor, action, details, created_at FROM audit_logs WHERE event_id = ? ORDER BY id DESC LIMIT 200', ev.id)
     .map((a) => ({ id: a.id, actor: a.actor, action: a.action, details: a.details, createdAt: a.created_at }));
+  const current = ctx.currentRound(ev);
   return {
     serverNow: now,
     event: { id: ev.id, name: ev.name, pin: ev.pin, state: ev.state, settings: ctx.settings(ev), currentRoundId: ev.current_round_id, qualificationFrozen: ev.qualification_frozen === 1, joinUrls: [ctx.joinUrlFor(ev.pin)] },
     allowedActions: allowedActions(ctx, ev),
     rounds,
+    live: current ? livePublic(ctx, ev, current) : null,
     teams: adminTeams,
     leaderboard: rows,
     audit,

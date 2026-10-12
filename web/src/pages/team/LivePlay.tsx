@@ -49,17 +49,15 @@ export function LivePlay({ team, pub, round, live, now, paused }: { team: TeamSt
         <PhaseBar q={q} now={now} paused={paused} />
       </div>
 
-      {paused ? (
-        <div role="status" className="panel pop border-warn p-6 text-center">
-          <p className="text-3xl">⏸</p>
+      {paused && (
+        <div role="status" className="panel pop border-warn p-4 text-center">
+          <p className="text-3xl" aria-hidden="true">⏸</p>
           <p className="text-xl font-black">Game paused</p>
-          <p className="text-muted">The host paused the round. The clock is frozen.</p>
+          <p className="text-muted">The host paused the round and the clock is frozen. The question stays here; answering opens again when the host resumes.</p>
         </div>
-      ) : q.phase === 'open' ? (
-        <Open key={q.index} q={q} team={team} live={live} now={now} />
-      ) : (
-        <Reveal q={q} team={team} />
       )}
+      {/* Stays mounted through a pause, so a tile or option picked before it is still picked afterwards. */}
+      {q.phase === 'open' ? <Open key={q.index} q={q} team={team} live={live} now={now} paused={paused} /> : <Reveal q={q} team={team} />}
     </section>
   );
 }
@@ -71,7 +69,7 @@ function PhaseBar({ q, now, paused }: { q: LivePublic; now: number; paused: bool
   return (
     <div className="mt-2">
       <div className="flex items-baseline justify-between text-sm">
-        <span className="text-muted">{q.phase === 'open' ? 'Time to answer' : 'Next question in'}</span>
+        <span className="text-muted">{paused ? 'Clock paused' : q.phase === 'open' ? 'Time to answer' : 'Next question in'}</span>
         <span role="timer" aria-label={`${Math.ceil(left / 1000)} seconds`} className={`mono text-2xl font-black ${urgent ? 'urgent text-bad' : ''}`}>{fmtClock(left)}</span>
       </div>
       <div className="mt-1 h-2 overflow-hidden rounded-full bg-panel2" aria-hidden="true">
@@ -81,7 +79,7 @@ function PhaseBar({ q, now, paused }: { q: LivePublic; now: number; paused: bool
   );
 }
 
-function Open({ q, team, live, now }: { q: LivePublic; team: TeamState; live: Live; now: number }) {
+function Open({ q, team, live, now, paused }: { q: LivePublic; team: TeamState; live: Live; now: number; paused: boolean }) {
   const me = team.live!;
   const [value, setValue] = useState('');
   const [double, setDouble] = useState(false);
@@ -99,7 +97,7 @@ function Open({ q, team, live, now }: { q: LivePublic; team: TeamState; live: Li
   }, [me.doubleAvailable]);
 
   async function send() {
-    if (busy || !value.trim()) return;
+    if (busy || paused || !value.trim()) return;
     setBusy(true);
     setError(null);
     try {
@@ -137,26 +135,26 @@ function Open({ q, team, live, now }: { q: LivePublic; team: TeamState; live: Li
       ) : (
         <form onSubmit={(e) => { e.preventDefault(); if (q.options.length === 0 && !bingo) void send(); }} className="flex flex-col gap-3">
           {bingo ? (
-            <BingoCard bingo={bingo} selected={value} onSelect={setValue} />
+            <BingoCard bingo={bingo} selected={value} onSelect={setValue} disabled={paused} />
           ) : q.options.length > 0 ? (
-            <OptionButtons options={q.options} value={value} onChange={setValue} />
+            <OptionButtons options={q.options} value={value} onChange={setValue} disabled={paused} />
           ) : (
             <div>
               <label className="lbl" htmlFor="live-ans">Your answer</label>
-              <input id="live-ans" className="field mono !min-h-14 text-xl" value={value} onChange={(e) => setValue(e.target.value)} maxLength={120} autoComplete="off" spellCheck={false} inputMode={q.kind === 'number' ? 'decimal' : 'text'} enterKeyHint="send" />
+              <input id="live-ans" className="field mono !min-h-14 text-xl" disabled={paused} value={value} onChange={(e) => setValue(e.target.value)} maxLength={120} autoComplete="off" spellCheck={false} inputMode={q.kind === 'number' ? 'decimal' : 'text'} enterKeyHint="send" />
             </div>
           )}
           {me.doubleAvailable && (
             <label className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 px-4 py-3 transition ${double ? 'pulse border-warn bg-[#3b2a05]' : 'border-line'}`}>
-              <input type="checkbox" className="h-6 w-6" checked={double} onChange={(e) => setDouble(e.target.checked)} />
+              <input type="checkbox" className="h-6 w-6" checked={double} disabled={paused} onChange={(e) => setDouble(e.target.checked)} />
               <span>
                 <strong>🔥 Double Down</strong> <span className="text-sm text-muted">(one per game)</span>
                 <span className="block text-sm text-muted">Right = double points. Wrong = you lose {q.points}.</span>
               </span>
             </label>
           )}
-          <button type={q.options.length > 0 || bingo ? 'button' : 'submit'} onClick={q.options.length > 0 || bingo ? () => void send() : undefined} className="btn btn-primary !min-h-14 text-lg" disabled={busy || !value.trim()}>
-            {busy ? 'Locking in…' : double ? '🔥 Lock in with Double Down' : bingo && value ? `Lock in ${label(value)}` : 'Lock in answer'}
+          <button type={q.options.length > 0 || bingo ? 'button' : 'submit'} onClick={q.options.length > 0 || bingo ? () => void send() : undefined} className="btn btn-primary !min-h-14 text-lg" disabled={busy || paused || !value.trim()}>
+            {paused ? '⏸ Paused' : busy ? 'Locking in…' : double ? '🔥 Lock in with Double Down' : bingo && value ? `Lock in ${label(value)}` : 'Lock in answer'}
           </button>
         </form>
       )}

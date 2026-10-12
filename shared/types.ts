@@ -335,6 +335,8 @@ export interface AdminState {
   };
   allowedActions: string[];
   rounds: AdminRound[];
+  /** The live question right now (timer, answers in, reveal stats); pair it with the answer key in `rounds`. Null outside a running live round. */
+  live: LivePublic | null;
   teams: AdminTeam[];
   leaderboard: LeaderboardRow[];
   audit: AuditEntry[];

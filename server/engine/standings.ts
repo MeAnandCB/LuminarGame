@@ -61,7 +61,8 @@ export function computeStandings(ctx: Ctx, ev: EventRow): Standing[] {
     rows.map((r) => ({
       teamId: r.id,
       name: r.name,
-      tier: frozen && !r.qualified ? 1 : 0,
+      // Non-finalists last; in the Final Showdown a finalist knocked out of lives ranks below every team still standing, whatever the points.
+      tier: frozen && !r.qualified ? 2 : liveState.get(r.id)?.eliminated === 1 ? 1 : 0,
       total: r.total,
       focus: r.focus,
       solved: r.solved,

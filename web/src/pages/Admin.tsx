@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { AdminChallenge, AdminRound, AdminState, AdminTeam, EventSettings, RoundConfig } from '../../../shared/types';
 import { AWAY_GRACE_MS } from '../../../shared/contract';
-import { ApiFailure, api, errMsg, setCsrf } from '../lib/api';
+import { ApiFailure, api, errMsg } from '../lib/api';
+import { AdminGate } from '../components/AdminGate';
 import { fmtClock, remaining, useLive, useServerNow } from '../lib/realtime';
 import { beep, loadSoundPref, saveSoundPref, unlockAudio } from '../lib/alertSound';
 import { useOfflineTeams } from '../lib/offlineTeams';
@@ -13,51 +14,7 @@ const awayMs = (t: AdminTeam, now: number): number | null => (t.status === 'appr
 const awaySecs = (ms: number) => Math.max(1, Math.round(ms / 1000));
 
 export function AdminApp() {
-  const [phase, setPhase] = useState<'loading' | 'login' | 'in'>('loading');
-  useEffect(() => {
-    api<{ csrfToken: string }>('GET', '/admin/me')
-      .then((r) => {
-        setCsrf(r.csrfToken);
-        setPhase('in');
-      })
-      .catch(() => setPhase('login'));
-  }, []);
-  if (phase === 'loading') return <Spinner />;
-  if (phase === 'login') return <Login onDone={() => setPhase('in')} />;
-  return <Dashboard onLoggedOut={() => { setCsrf(null); setPhase('login'); }} />;
-}
-
-function Login({ onDone }: { onDone: () => void }) {
-  const [u, setU] = useState('');
-  const [p, setP] = useState('');
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await api<{ csrfToken: string }>('POST', '/admin/login', { username: u, password: p });
-      setCsrf(r.csrfToken);
-      onDone();
-    } catch (x) {
-      setErr(errMsg(x));
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 px-4">
-      <h1 className="text-3xl font-black">BRAINBYTE <span className="text-violet">ADMIN</span></h1>
-      <form onSubmit={submit} className="panel flex flex-col gap-4 p-6" aria-label="Admin sign in">
-        {err && <ErrorBanner>{err}</ErrorBanner>}
-        <div><label className="lbl" htmlFor="u">Username</label><input id="u" className="field" autoComplete="username" value={u} onChange={(e) => setU(e.target.value)} required /></div>
-        <div><label className="lbl" htmlFor="p">Password</label><input id="p" type="password" className="field" autoComplete="current-password" value={p} onChange={(e) => setP(e.target.value)} required /></div>
-        <button className="btn btn-primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
-        <p className="text-sm text-muted">No account yet? Run <code className="mono">npm run admin:create -- &lt;username&gt;</code> on the host laptop.</p>
-      </form>
-    </main>
-  );
+  return <AdminGate title="ADMIN">{(signOut) => <Dashboard onLoggedOut={signOut} />}</AdminGate>;
 }
 
 type Tab = 'control' | 'teams' | 'rounds' | 'scores' | 'audit' | 'event';
@@ -142,6 +99,7 @@ function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
           {soundOn ? '🔔 Offline alert: on' : '🔕 Offline alert: off'}
         </button>
         <ConnBadge status={live.status} />
+        <a className="btn btn-ghost btn-sm" href="/coordinator" target="_blank" rel="noreferrer">Open coordinator ↗</a>
         <a className="btn btn-ghost btn-sm" href="/display" target="_blank" rel="noreferrer">Open projector ↗</a>
         <button className="btn btn-ghost btn-sm" onClick={async () => { await api('POST', '/admin/logout').catch(() => undefined); onLoggedOut(); }}>Sign out</button>
       </header>

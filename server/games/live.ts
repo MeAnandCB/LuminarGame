@@ -299,13 +299,17 @@ function requireLive(ctx: Ctx): { ev: EventRow; round: RoundRow } {
   return cur;
 }
 
-/** Close the open question now (jump to the reveal), or leave the reveal early (jump to the next question). */
-export function hostAdvance(ctx: Ctx, actor: string): void {
+/**
+ * Close the open question now (jump to the reveal), or leave the reveal early (jump to the next question).
+ * `expect` is what the caller's screen showed: if the game has already moved on, the click is stale and does nothing.
+ */
+export function hostAdvance(ctx: Ctx, actor: string, expect?: { index: number; phase: 'open' | 'reveal' }): void {
   const { ev, round } = requireLive(ctx);
   ctx.db.tx(() => {
     if (liveAdvance(ctx)) return; // the clock already moved things on; do not skip a second phase
     const fresh = ctx.round(round.id);
     if (fresh.status !== 'running') return;
+    if (expect && (fresh.live_index !== expect.index || fresh.live_phase !== expect.phase)) return;
     endPhaseNow(ctx, fresh);
     liveAdvance(ctx);
     ctx.audit(ev.id, actor, 'live.advance', { phase: fresh.live_phase, index: fresh.live_index });

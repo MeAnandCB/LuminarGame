@@ -118,6 +118,14 @@ describe('ranking and tie-breaking', () => {
     const r = rankTeams([base({ teamId: 1, total: 5000, tier: 1 }), base({ teamId: 2, total: 100, tier: 0 })]);
     expect(r[0]!.teamId).toBe(2);
   });
+  it('a finalist eliminated in the Showdown ranks below the survivors but above non-finalists', () => {
+    const r = rankTeams([
+      base({ teamId: 1, total: 5000, tier: 1 }), // eliminated: lost all lives
+      base({ teamId: 2, total: 3000, tier: 0 }), // still standing
+      base({ teamId: 3, total: 9000, tier: 2 }), // never a finalist
+    ]);
+    expect(r.map((x) => x.teamId)).toEqual([2, 1, 3]);
+  });
   it('selects the top N finalists, including fewer teams than N', () => {
     const r = rankTeams([base({ teamId: 1, total: 3 }), base({ teamId: 2, total: 2 }), base({ teamId: 3, total: 1 })]);
     expect(selectFinalists(r, 2)).toEqual([1, 2]);

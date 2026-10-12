@@ -344,6 +344,32 @@ describe('Level 5 - Final Showdown (lives, steals, last team standing)', () => {
     expect((await pub()).live.eligible).toBe(2);
   });
 
+  it('last team standing outranks raw points: a 5000-point team that loses all 3 lives cannot win', async () => {
+    b = await boot();
+    const { admin, teams } = await showdown(3);
+    await admin.post(`/api/admin/teams/${teams[2]!.state.team.id}/score`, { points: 5000, reason: 'test: huge lead' });
+    for (let q = 0; q < 3; q++) {
+      await teams[0]!.answer(correct(5, q));
+      await teams[1]!.answer(correct(5, q));
+      // team 3 stays silent and loses a life each question
+      await admin.post('/api/admin/round/live/advance'); // reveal
+      await admin.post('/api/admin/round/live/advance'); // next
+    }
+    const rows = (await pub()).leaderboard as { name: string; rank: number; total: number; eliminated: boolean }[];
+    const rich = rows.find((r) => r.name === 'Team 3')!;
+    const alive = rows.filter((r) => r.name !== 'Team 3');
+    expect(rich.eliminated).toBe(true);
+    expect(rich.total).toBeGreaterThan(Math.max(...alive.map((r) => r.total))); // more points...
+    expect(rich.rank).toBe(3); // ...yet last: the survivors rank above it
+    expect(alive.map((r) => r.rank).sort()).toEqual([1, 2]);
+
+    await admin.post('/api/admin/round/end');
+    await admin.post('/api/admin/event/complete');
+    const podium = (await pub()).podium as { name: string }[];
+    expect(podium[2]!.name).toBe('Team 3');
+    expect(podium[0]!.name).not.toBe('Team 3');
+  });
+
   it('the round ends early when one team is left; the survivor bonus is paid exactly once', async () => {
     b = await boot();
     const { admin, teams } = await showdown(2);

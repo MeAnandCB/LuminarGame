@@ -7,6 +7,7 @@ A real-time, local-network multiplayer tech competition for a live student event
 | Team (phones) | `http://<laptop-ip>:3000/` (or scan the QR code) | participants |
 | Projector | `http://<laptop-ip>:3000/display` | audience, read-only, no login |
 | Admin | `http://<laptop-ip>:3000/admin` | host, password protected |
+| Coordinator | `http://<laptop-ip>:3000/coordinator` | whoever conducts the live rounds; same admin sign-in, shows the answer keys |
 
 The game, five rounds of tech: **Level 1 Tech Faces** (live: identify the tech personality in the picture) → **Level 2 Tech Bingo** (live: a shuffled 4x4 bingo card per team, host-called clues, line and blackout bonuses) → **Level 3 Quick Brain** (self-paced quiz, with a Skip button) → **Level 4 Reel Rush** (live: speed, streaks, Double Down) → qualification (top *N* teams, default 5) → **Level 5 Final Showdown** (finalists only: lives, steals, last team standing) → podium.
 
@@ -78,7 +79,8 @@ Configuration (`.env`, never commit it): `PORT`, `HOST`, `DB_PATH`, `PUBLIC_URL`
 1. **Event tab:** set name, capacity (≤ 20), finalists count, auto-approve, live-scores on/off. **Rounds & scoring:** preview every question (tick *show answer keys*), adjust timers/points/hint penalties. Scoring locks once a round starts.
 2. **Control → Open registration.** The projector shows the PIN and QR code and fills 20 team slots live.
 3. **Teams tab:** approve/reject/remove (only before the first round). **Close registration & confirm teams** moves everyone to the lobby.
-4. **Add the Tech Faces photos** (see §5a) before the event, then **Prepare Level 1** (teams see the instructions) → **Start round**. Levels 1, 2, 4 and 5 are live: use **Close question now / Next question** to move at your own pace (or let the timers run). Pause/Resume/End as needed. After a round ends, optionally **Reveal answers** on the projector and phones.
+4. **Add the Tech Faces photos** (see §5a) before the event, then **Prepare Level 1** (teams see the instructions) → **Start round**. Levels 1, 2, 4 and 5 are live: use **Close question now / Next question** to move at your own pace (or let the timers run), or hand the loop to a coordinator (below). Pause/Resume/End as needed. After a round ends, optionally **Reveal answers** on the projector and phones.
+   **Coordinator desk** (`/coordinator`, open it from the admin header or on a second device and sign in with an admin account): during a live round it shows the current question with its answer key, the countdown and how many teams have locked in, with one big button that runs the loop **Reveal answer → Next question → repeat** (the last reveal reads *Finish round*). After the reveal it lists how many teams picked each option, the fastest finger, steals, eliminations and bingos so they can be announced. *Pause/Resume* sit next to the button, *Answers shown/hidden* masks every key if the screen is shared, and before a round starts (and during the self-paced Level 3) it shows the full question-and-answer sheet. The timers still apply: the question closes and the next one opens by themselves unless the round is paused. A tap on a stale screen (the timer moved the game on a moment earlier) is ignored by the server, so it can never skip a reveal.
 5. Repeat for Levels 2 and 3. After Level 4 ends, **Run qualification**: finalists are chosen and announced. You can change the number of finalists, or reopen qualification before Level 5 starts. Level 5 starting **freezes** qualification.
 6. **Prepare/Start Level 5** (only finalists can play), **End round**, then **Finish event & show winners**: the projector shows the podium and champion.
 7. **Leaderboard tab → Export CSV.** Manual score corrections (with a mandatory reason) live in the same tab and appear in the audit log.
@@ -117,8 +119,8 @@ How a live question works: it is **open** (answers are locked in but *not scored
 **Tech Bingo** is a live round like the others (every call is one question with a 15 s window and a reveal). The 16 tiles are the same for everyone; each team's card order is a deterministic shuffle of its team id, so cards differ but are stable across phones and reloads. A tile is marked only when the call is **resolved**: locked-in answers are not shown on the card (or the projector's master board) until the reveal, exactly like the other live rounds. Lines are paid once each, at the call that completes them (idempotent ledger keys), and the blackout once. A voided call (host *Skip*) is never "called" and marks nothing.
 
 **Ranking and tie-breaker** (one function, `server/game/ranking.ts`, used by the backend, admin, projector, phones, CSV and podium):
-1. finalists above non-finalists once Level 3 has begun; then
-2. highest total score; 3. highest score in the most recently played level; 4. most challenges solved; 5. earliest timestamp of the last solve; 6. lowest team id (only to keep the order deterministic). Rows still tied after step 5 are flagged **tie** in every view.
+1. finalists above non-finalists once the Final Showdown has started, and in the Final Showdown a finalist who has lost all 3 lives ranks below every finalist still standing, even with more points (so a 5000-point team that is eliminated loses to a 3000-point survivor); then
+2. highest total score (survivors include their 300 bonus); 3. highest score in the most recently played level; 4. most challenges solved; 5. earliest timestamp of the last solve; 6. lowest team id (only to keep the order deterministic). Rows still tied after step 5 are flagged **tie** in every view.
 
 **Timing policy.** The server clock is the only clock. A round stores its deadline; pausing stores the remaining milliseconds and resuming sets `deadline = now + remaining`. A submission is accepted iff the round is running and `server receipt time ≤ deadline` (**inclusive**). Submissions are processed one at a time in arrival order inside a database transaction, so two answers in the same millisecond are ordered by their submission id. Late answers are stored for audit (`outcome = late`), score nothing and do not consume a question. Bonuses use the pause-safe "active play" clock, not wall time. Browsers only interpolate a countdown between server syncs.
 
@@ -136,7 +138,7 @@ server/
   realtime/ socket.io auth, coalesced broadcasts, ticker
   db/      node:sqlite wrapper, migrations
   content/ seeded tech content: faces.ts, bingo.ts, quiz.ts, lightning.ts, showdown.ts
-web/       React + Vite + Tailwind: Team, Display, Admin
+web/       React + Vite + Tailwind: Team, Display, Admin, Coordinator
 tests/     unit/, integration/ (Vitest, real server + sockets), e2e/ (Playwright)
 scripts/   admin, migrate, seed, backup, loadtest, dev, e2e-server
 ```
@@ -162,7 +164,7 @@ Extra guards live in the engine: Level 5 can only be prepared from QUALIFICATION
 * Admin passwords: scrypt with a per-user salt, constant-time comparison; failed logins are rate limited (8 / 10 min / IP) and audited; sessions are random 256-bit tokens, stored hashed, with a CSRF token required on every state-changing admin request, `HttpOnly; SameSite=Strict` cookies, and an Origin check on all unsafe `/api` requests and WebSocket handshakes.
 * Team identity comes **only** from an HttpOnly session cookie issued at registration (stored hashed). Names/ids in request bodies are ignored; a second phone needs the private team code.
 * Input is validated with Zod on every route and socket event; SQL is parameterised; responses never include stack traces or SQL errors; CSV cells beginning with `= + - @` are neutralised.
-* Answer keys exist only in the database and the `admin:state` payload. Teams get the prompt only (never the key); the projector/phones receive answers only after the host reveals them for a finished round.
+* Answer keys exist only in the database and the `admin:state` payload (which also feeds the coordinator desk, so `/coordinator` is behind the same admin sign-in; there is no separate coordinator role). Teams get the prompt only (never the key); the projector/phones receive answers only after the host reveals them for a finished round.
 * Rate limits: answers (12 / 10 s / team, shared by socket and HTTP), hints, joins, device links, logins.
 * **A local network is not a trusted network.** Anyone on the same Wi-Fi who knows the PIN can try to register while registration is open, and traffic is plain HTTP (cookies cannot be `Secure`, and can be sniffed on open Wi-Fi). Use a WPA2/3-protected network, keep registration closed except when needed, use `autoApprove=false` for open venues, and choose a strong admin password. Do not expose port 3000 to the internet. Put it behind an HTTPS reverse proxy and set `COOKIE_SECURE=true` if you ever must.
 

@@ -241,7 +241,7 @@ export function createApp(opts: AppOptions): AppHandle {
     ok(res);
   });
   adm.post('/round/live/advance', (req, res) => {
-    live.hostAdvance(ctx, actor(req));
+    live.hostAdvance(ctx, actor(req), S.liveAdvanceSchema.parse(req.body ?? {}).expect);
     ok(res);
   });
   adm.post('/round/live/skip', (req, res) => {
