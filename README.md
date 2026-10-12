@@ -49,7 +49,7 @@ The server prints the admin, projector and phone URLs on start-up. `npm run dev`
 | `npm run admin:create -- <user>` / `npm run admin:reset-password -- <user>` | manage admin accounts |
 | `npm run loadtest -- <url>` | 20-team simultaneous-answer load test (see §9) |
 
-Configuration (`.env`, never commit it): `PORT`, `HOST`, `DB_PATH`, `PUBLIC_URL`, `ADMIN_SESSION_HOURS`, `COOKIE_SECURE`, `RATE_LIMIT_ANSWER_MAX`. There is **no default admin password**; an admin must be created with the command above. For scripted use set `ADMIN_PASSWORD` in the environment instead of typing it.
+Configuration (`.env`, never commit it): `PORT`, `HOST`, `DB_PATH`, `PUBLIC_URL`, `ADMIN_SESSION_HOURS`, `COOKIE_SECURE`, `RATE_LIMIT_ANSWER_MAX`, `RATE_LIMIT_LOGIN_MAX` (default 8 sign-ins per 10 minutes; only raise it for automated tests). There is **no default admin password**; an admin must be created with the command above. For scripted use set `ADMIN_PASSWORD` in the environment instead of typing it.
 
 **Resetting an admin password:** `npm run admin:reset-password -- host` (also signs that admin out everywhere).
 

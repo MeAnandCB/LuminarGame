@@ -16,10 +16,11 @@ const host = process.env.HOST ?? '0.0.0.0';
 const dbPath = path.resolve(process.env.DB_PATH ?? './data/brainbyte.db');
 
 const answerMax = Number(process.env.RATE_LIMIT_ANSWER_MAX ?? 12);
+const loginMax = Number(process.env.RATE_LIMIT_LOGIN_MAX ?? 8);
 
 const handle = createApp({
   dbPath,
-  rateLimits: { answer: { max: answerMax, windowMs: 10_000 } },
+  rateLimits: { answer: { max: answerMax, windowMs: 10_000 }, login: { max: loginMax, windowMs: 600_000 } },
   config: {
     port,
     publicUrl: process.env.PUBLIC_URL || null,

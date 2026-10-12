@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from
 import type { AdminChallenge, AdminRound, AdminState, AdminTeam, EventSettings, RoundConfig } from '../../../shared/types';
 import { ApiFailure, api, errMsg, setCsrf } from '../lib/api';
 import { fmtClock, remaining, useLive, useServerNow } from '../lib/realtime';
+import { beep, loadSoundPref, saveSoundPref, unlockAudio } from '../lib/alertSound';
+import { useOfflineTeams } from '../lib/offlineTeams';
 import { ConnBadge, Empty, ErrorBanner, Leaderboard, QrImage, Spinner, useConfirm } from '../components/ui';
 import { FaceImage } from '../components/FaceImage';
 
@@ -64,6 +66,8 @@ function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const confirm = useConfirm();
+  const [soundOn, setSoundOn] = useState(loadSoundPref);
+  const [armed, setArmed] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -80,6 +84,24 @@ function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
   }, [live.status, refresh]);
 
   const state = [live.admin, fetched].filter((x): x is AdminState => !!x).sort((a, b) => b.serverNow - a.serverNow)[0] ?? null;
+
+  // Browsers only allow sound after a click or key press, so arm the alert on the first one.
+  useEffect(() => {
+    const arm = () => void unlockAudio().then(setArmed);
+    const events = ['pointerdown', 'pointerup', 'keydown'] as const;
+    for (const e of events) window.addEventListener(e, arm);
+    if (navigator.userActivation?.hasBeenActive) arm(); // the sign-in click already counts
+    return () => events.forEach((e) => window.removeEventListener(e, arm));
+  }, []);
+  const offline = useOfflineTeams(state?.teams ?? null, !!state && state.event.state !== 'EVENT_COMPLETED', () => {
+    if (soundOn) beep();
+  });
+  function toggleSound() {
+    const next = !soundOn;
+    setSoundOn(next);
+    saveSoundPref(next);
+    if (next) void unlockAudio().then((ok) => { setArmed(ok); if (ok) beep(); }); // a sample, so the host hears what to expect
+  }
 
   const act = useCallback(
     async <T,>(fn: () => Promise<T>): Promise<T | undefined> => {
@@ -110,6 +132,9 @@ function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
         {state && <span className="badge" data-testid="event-state">{state.event.state.replace('_', ' ')}</span>}
         {state && <span className="mono text-sm text-muted">PIN <strong className="text-neon" data-testid="pin">{state.event.pin}</strong></span>}
         <span className="flex-1" />
+        <button className="btn btn-ghost btn-sm" aria-pressed={soundOn} onClick={toggleSound} data-testid="offline-sound" title="Beep when a team goes offline">
+          {soundOn ? '🔔 Offline alert: on' : '🔕 Offline alert: off'}
+        </button>
         <ConnBadge status={live.status} />
         <a className="btn btn-ghost btn-sm" href="/display" target="_blank" rel="noreferrer">Open projector ↗</a>
         <button className="btn btn-ghost btn-sm" onClick={async () => { await api('POST', '/admin/logout').catch(() => undefined); onLoggedOut(); }}>Sign out</button>
@@ -119,6 +144,14 @@ function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
           <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={`btn btn-sm shrink-0 ${tab === id ? 'btn-primary' : 'btn-ghost'}`}>{label}</button>
         ))}
       </nav>
+      {offline.length > 0 && (
+        <section aria-label="Offline teams" aria-live="assertive" data-testid="offline-banner" className="pulse flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border-2 border-bad bg-[#3b0a1c] px-4 py-3 text-[#ffd5dc]">
+          <strong>⚠ {offline.length} team{offline.length === 1 ? ' is' : 's are'} offline:</strong>
+          {offline.map((t) => <span key={t.id} className="badge badge-bad">{t.name}</span>)}
+          {soundOn && !armed && <span className="text-sm">🔇 Click anywhere on this page to enable the alert sound.</span>}
+          <button className="btn btn-ghost btn-sm ml-auto" onClick={() => setTab('teams')}>View teams</button>
+        </section>
+      )}
       {error && <ErrorBanner>{error}</ErrorBanner>}
       {state === null ? (
         <CreateEvent busy={busy} onCreate={(name) => post('/admin/event', { name })} />
@@ -301,7 +334,7 @@ function Teams({ s, busy, post, confirm }: { s: AdminState; busy: boolean; post:
           <td className="px-2 py-2 text-sm">{t.players.join(', ')}</td>
           <td className="px-2 py-2 mono text-sm">{t.code}</td>
           <td className="px-2 py-2"><span className={`badge ${t.status === 'approved' ? 'badge-ok' : t.status === 'pending' ? 'badge-warn' : 'badge-bad'}`}>{t.status}</span></td>
-          <td className="px-2 py-2 text-sm">{t.connected ? '● online' : '◌ offline'} · {t.devices} device{t.devices === 1 ? '' : 's'}</td>
+          <td className="px-2 py-2 text-sm">{t.connected || t.status !== 'approved' ? (t.connected ? '● online' : '◌ offline') : <span className="badge badge-bad">◌ offline</span>} · {t.devices} device{t.devices === 1 ? '' : 's'}</td>
           <td className="px-2 py-2">
             <div className="flex flex-wrap gap-1">
               {early && t.status !== 'approved' && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => post(`/admin/teams/${t.id}/status`, { status: 'approved' })}>Approve</button>}

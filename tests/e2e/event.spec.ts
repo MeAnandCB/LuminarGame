@@ -313,3 +313,65 @@ test('a team that loses Wi-Fi reconnects with its progress intact', async ({ bro
   await t.ctx.close();
   await req.dispose();
 });
+
+test('the host sees and hears it when a team goes offline', async ({ browser, playwright }) => {
+  const req = await playwright.request.newContext({ baseURL: 'http://127.0.0.1:3100' });
+  const api = new AdminApi(req);
+  await api.login();
+  await api.post('/event', { name: 'Offline Arena' });
+  await api.post('/registration/open');
+  const pin = (await api.state()).event.pin as string;
+
+  // The alert is three tones per alarm; count them as the browser plays them.
+  const adminCtx = await browser.newContext({ viewport: { width: 1366, height: 800 } });
+  await adminCtx.addInitScript(() => {
+    const w = window as unknown as { __tones: number };
+    w.__tones = 0;
+    const create = AudioContext.prototype.createOscillator;
+    AudioContext.prototype.createOscillator = function (this: AudioContext) {
+      w.__tones++;
+      return create.call(this);
+    };
+  });
+  const admin = await adminCtx.newPage();
+  const tones = () => admin.evaluate(() => (window as unknown as { __tones: number }).__tones);
+  await admin.goto('/admin');
+  await admin.getByLabel('Username').fill(ADMIN.username);
+  await admin.getByLabel('Password').fill(ADMIN.password);
+  await admin.getByRole('button', { name: 'Sign in' }).click();
+  await expect(admin.getByTestId('event-state')).toHaveText('REGISTRATION OPEN');
+  const banner = admin.getByTestId('offline-banner');
+
+  const drifters = await registerTeam(browser, pin, 'Drifters', 'D1', 'D2');
+  const ghosts = await registerTeam(browser, pin, 'Ghosts', 'G1', 'G2');
+  await expect(banner).toBeHidden();
+
+  // a team drops: after the short grace period it is listed and the host hears the alert
+  await drifters.page.close();
+  await expect(banner).toContainText('1 team is offline');
+  await expect(banner).toContainText('Drifters');
+  await expect.poll(tones).toBe(3);
+  await admin.getByRole('tab', { name: 'Teams' }).click();
+  await expect(admin.getByRole('row', { name: /Drifters/ }).locator('.badge-bad')).toContainText('offline');
+
+  // reloading the admin page lists the team that is still offline, but stays quiet
+  await admin.reload();
+  await expect(banner).toContainText('Drifters');
+  await admin.waitForTimeout(4000);
+  expect(await tones()).toBe(0);
+
+  // with the alert switched off a second drop is still listed, without a sound
+  await admin.getByTestId('offline-sound').click();
+  await expect(admin.getByTestId('offline-sound')).toHaveText(/off/);
+  await ghosts.page.close();
+  await expect(banner).toContainText('2 teams are offline');
+  await admin.waitForTimeout(500);
+  expect(await tones()).toBe(0);
+
+  // both phones come back (same cookies, so same team): the banner clears
+  await (await drifters.ctx.newPage()).goto('/');
+  await (await ghosts.ctx.newPage()).goto('/');
+  await expect(banner).toBeHidden();
+
+  await Promise.all([adminCtx.close(), drifters.ctx.close(), ghosts.ctx.close(), req.dispose()]);
+});
