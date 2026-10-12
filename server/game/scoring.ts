@@ -26,6 +26,8 @@ export const roundConfigSchema = z.object({
   lives: z.number().int().min(0).max(10),
   stealPoints: z.number().int().min(0).max(1000),
   survivorBonus: z.number().int().min(0).max(5000),
+  lineBonus: z.number().int().min(0).max(1000).default(0),
+  blackoutBonus: z.number().int().min(0).max(5000).default(0),
 });
 
 export const eventSettingsSchema = z.object({
@@ -59,15 +61,19 @@ const BASE: RoundConfig = {
   lives: 0,
   stealPoints: 0,
   survivorBonus: 0,
+  lineBonus: 0,
+  blackoutBonus: 0,
 };
 
 export const DEFAULT_ROUND_CONFIG: Record<RoundKind, RoundConfig> = {
+  faces: { ...BASE, questionSec: 20, revealSec: 8, speedBonusMax: 50, fastestBonus: 30, streakBonus: 20, streakCap: 3 },
+  bingo: { ...BASE, questionSec: 15, revealSec: 6, speedBonusMax: 25, lineBonus: 75, blackoutBonus: 250 },
   quiz: { ...BASE, durationSec: 600, speedBonusMax: 10, speedWindowSec: 30, allowSkip: true },
   lightning: { ...BASE, questionSec: 20, revealSec: 7, speedBonusMax: 100, fastestBonus: 50, streakBonus: 25, streakCap: 4, doubleDown: true },
   showdown: { ...BASE, questionSec: 25, revealSec: 8, speedBonusMax: 150, fastestBonus: 100, lives: 3, stealPoints: 75, survivorBonus: 300 },
 };
 
-export const isLive = (kind: RoundKind): boolean => kind === 'lightning' || kind === 'showdown';
+export const isLive = (kind: RoundKind): boolean => kind !== 'quiz';
 
 /** Live rounds run on question/reveal timers; the round clock is their sum plus a little slack. */
 export function liveDurationSec(questions: number, cfg: Pick<RoundConfig, 'questionSec' | 'revealSec'>): number {

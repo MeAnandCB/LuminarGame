@@ -3,6 +3,7 @@ import type { AdminChallenge, AdminRound, AdminState, AdminTeam, EventSettings, 
 import { ApiFailure, api, errMsg, setCsrf } from '../lib/api';
 import { fmtClock, remaining, useLive, useServerNow } from '../lib/realtime';
 import { ConnBadge, Empty, ErrorBanner, Leaderboard, QrImage, Spinner, useConfirm } from '../components/ui';
+import { FaceImage } from '../components/FaceImage';
 
 export function AdminApp() {
   const [phase, setPhase] = useState<'loading' | 'login' | 'in'>('loading');
@@ -235,6 +236,15 @@ function Control({ s, now, busy, post, confirm }: { s: AdminState; now: number; 
           ))}
           {actions.length === 0 && <Empty>No actions available in this state.</Empty>}
         </div>
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-bad/50 p-3">
+          <button
+            className="btn btn-danger btn-sm" disabled={busy} data-testid="act-event.reset"
+            onClick={() => confirm('Reset the game?', 'Every team, answer, score and log entry is deleted, all phones are signed out and the game goes back to Level 1. The questions and admin accounts are kept. Export the CSV first if you need the results.', 'Yes, reset everything', () => post('/admin/event/reset', { confirm: 'RESET' }), true)}
+          >
+            ⟲ Reset game
+          </button>
+          <span className="text-sm text-muted">Clears all saved teams and scores and starts again from Level 1.</span>
+        </div>
         {endedRound && (
           <div className="flex flex-wrap items-center gap-3 rounded-xl border border-line p-3">
             <span>Answer reveal for {endedRound.name}:</span>
@@ -386,11 +396,17 @@ function RoundEditor({ r, keys, act }: { r: AdminRound; keys: boolean; act: <T>(
             <NumField id={`wp${r.level}`} label="Wrong-answer penalty" value={cfg.wrongPenalty} min={0} max={500} disabled={locked} onChange={(n) => set('wrongPenalty', n)} />
           </>
         )}
-        {r.kind === 'lightning' && (
+        {(r.kind === 'lightning' || r.kind === 'faces') && (
           <>
             <NumField id={`st${r.level}`} label="Streak bonus per step" value={cfg.streakBonus} min={0} max={200} disabled={locked} onChange={(n) => set('streakBonus', n)} />
             <NumField id={`sc${r.level}`} label="Streak cap (steps)" value={cfg.streakCap} min={0} max={20} disabled={locked} onChange={(n) => set('streakCap', n)} />
-            <Check id={`dd${r.level}`} label="Double Down power-up" checked={cfg.doubleDown} disabled={locked} onChange={(v) => set('doubleDown', v)} />
+            {r.kind === 'lightning' && <Check id={`dd${r.level}`} label="Double Down power-up" checked={cfg.doubleDown} disabled={locked} onChange={(v) => set('doubleDown', v)} />}
+          </>
+        )}
+        {r.kind === 'bingo' && (
+          <>
+            <NumField id={`lb${r.level}`} label="Bonus per completed line" value={cfg.lineBonus} min={0} max={1000} disabled={locked} onChange={(n) => set('lineBonus', n)} />
+            <NumField id={`bb${r.level}`} label="Blackout bonus (full card)" value={cfg.blackoutBonus} min={0} max={5000} disabled={locked} onChange={(n) => set('blackoutBonus', n)} />
           </>
         )}
         {r.kind === 'showdown' && (
@@ -406,14 +422,14 @@ function RoundEditor({ r, keys, act }: { r: AdminRound; keys: boolean; act: <T>(
       <div>
         <h3 className="mb-2 font-bold">Questions ({r.challenges.length}) – preview</h3>
         <ol className="space-y-2">
-          {r.challenges.map((c) => <ChallengeRowEditor key={c.id} c={c} keys={keys} locked={locked} act={act} quiz={r.kind === 'quiz'} />)}
+          {r.challenges.map((c) => <ChallengeRowEditor key={c.id} c={c} keys={keys} locked={locked} act={act} quiz={r.kind === 'quiz'} bingo={r.kind === 'bingo'} />)}
         </ol>
       </div>
     </div>
   );
 }
 
-function ChallengeRowEditor({ c, keys, locked, act, quiz }: { c: AdminChallenge; keys: boolean; locked: boolean; act: <T>(fn: () => Promise<T>) => Promise<T | undefined>; quiz: boolean }) {
+function ChallengeRowEditor({ c, keys, locked, act, quiz, bingo }: { c: AdminChallenge; keys: boolean; locked: boolean; act: <T>(fn: () => Promise<T>) => Promise<T | undefined>; quiz: boolean; bingo: boolean }) {
   const [points, setPoints] = useState(c.points);
   const [hint, setHint] = useState(c.hint ?? '');
   useEffect(() => { setPoints(c.points); setHint(c.hint ?? ''); }, [c.points, c.hint]);
@@ -422,11 +438,17 @@ function ChallengeRowEditor({ c, keys, locked, act, quiz }: { c: AdminChallenge;
   return (
     <li className="rounded-xl border border-line bg-panel2/60 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
+        {c.image && (
+          <div className="w-20 shrink-0">
+            <FaceImage src={c.image} className="aspect-[4/5] w-20 rounded-lg" />
+            <p className="mono mt-1 break-all text-[0.65rem] text-muted">web/public{c.image}.jpg</p>
+          </div>
+        )}
         <div className="min-w-0 flex-1">
           <p className="font-semibold">{c.position + 1}. {c.title} <span className="badge ml-1">{c.kind}</span></p>
           <p className="prompt mt-1 text-sm text-muted">{c.prompt}</p>
-          {c.options && <p className="mt-1 text-sm">{c.options.map((o) => `${o.id.toUpperCase()}) ${o.text}`).join('   ')}</p>}
-          <p className="mt-1 text-sm">{keys ? <>Answer: <strong className="mono text-ok">{answer}</strong></> : <span className="text-muted">Answer hidden</span>}</p>
+          {c.options && !bingo && <p className="mt-1 text-sm">{c.options.map((o) => `${o.id.toUpperCase()}) ${o.text}`).join('   ')}</p>}
+          <p className="mt-1 text-sm">{keys ? <>Answer: <strong className="mono text-ok">{answer}</strong>{c.hint && !quiz ? <span className="text-muted"> · {c.hint}</span> : null}</> : <span className="text-muted">Answer hidden</span>}</p>
         </div>
         <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); void act(() => api('PATCH', `/admin/challenges/${c.id}`, { points, hint: hint || null })); }}>
           <div className="w-24"><label className="lbl" htmlFor={`p${c.id}`}>Points</label><input id={`p${c.id}`} type="number" min={0} max={5000} className="field !min-h-10" disabled={locked} value={Number.isFinite(points) ? points : ''} onChange={(e) => setPoints(Number(e.target.value))} /></div>

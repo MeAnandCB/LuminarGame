@@ -1,7 +1,7 @@
 import type { RoundConfig } from '../../shared/types.js';
 import { speedBonus } from './scoring.js';
 
-/** Pure scoring rules shared by Level 2 (Reel Rush) and Level 3 (Final Showdown). */
+/** Pure scoring rules shared by the live games (Tech Faces, Tech Bingo, Reel Rush, Final Showdown). */
 
 export interface LiveTeamInput {
   teamId: number;
@@ -19,13 +19,15 @@ export interface LiveTeamInput {
   totalBefore: number;
 }
 
-export type AwardKind = 'answer' | 'speed_bonus' | 'fastest_bonus' | 'streak_bonus' | 'double_down' | 'wrong_penalty' | 'steal' | 'stolen';
+export type AwardKind = 'answer' | 'speed_bonus' | 'fastest_bonus' | 'streak_bonus' | 'double_down' | 'wrong_penalty' | 'steal' | 'stolen' | 'bingo_line' | 'bingo_blackout';
 
 export interface Award {
   teamId: number;
   kind: AwardKind;
   points: number;
   label: string;
+  /** Idempotency key override for awards that can repeat within one question (bingo lines). */
+  key?: string;
 }
 
 export interface LiveResolution {

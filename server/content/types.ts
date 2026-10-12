@@ -4,10 +4,12 @@ export interface SeedChallenge {
   kind: ChallengeKind;
   title: string;
   prompt: string;
-  options?: { id: string; text: string }[];
+  options?: { id: string; text: string; icon?: string }[];
   answers: string[];
   points: number;
   hint?: string;
+  /** Tech Faces: picture URL without extension, served from web/public. */
+  image?: string;
 }
 
 export interface SeedRound {

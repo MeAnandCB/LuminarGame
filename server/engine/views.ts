@@ -177,7 +177,7 @@ export function teamState(ctx: Ctx, team: TeamRow, cached?: Standing[]): TeamSta
 }
 
 function adminChallenge(c: ChallengeRow): AdminChallenge {
-  return { id: c.id, position: c.position, kind: c.kind, title: c.title, prompt: c.prompt, options: parse(c.options), answers: JSON.parse(c.answers), points: c.points, hint: c.hint };
+  return { id: c.id, position: c.position, kind: c.kind, title: c.title, prompt: c.prompt, options: parse(c.options), answers: JSON.parse(c.answers), points: c.points, hint: c.hint, image: c.image };
 }
 
 export function adminState(ctx: Ctx): AdminState | null {

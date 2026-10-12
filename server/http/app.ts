@@ -273,6 +273,11 @@ export function createApp(opts: AppOptions): AppHandle {
     app.use(express.static(webDir, { index: false, maxAge: '1h', setHeaders: (res, p) => p.endsWith('.html') && res.setHeader('Cache-Control', 'no-cache') }));
     app.use((req, res, next) => {
       if (req.method !== 'GET' || req.path.startsWith('/socket.io')) return next();
+      // A missing file (e.g. a face photo that was not added) must be a real 404, not the app shell.
+      if (path.extname(req.path)) {
+        res.status(404).end();
+        return;
+      }
       res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(path.join(webDir, 'index.html'));
     });

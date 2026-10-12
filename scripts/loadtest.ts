@@ -60,6 +60,12 @@ async function main() {
   console.log(`registered ${TEAMS} teams in ${(performance.now() - t0).toFixed(0)} ms`);
 
   await admin.call('POST', '/api/admin/registration/confirm');
+  // Levels 1 (Tech Faces) and 2 (Tech Bingo) are live rounds; play them empty so the self-paced quiz (Level 3) is next.
+  for (let level = 1; level <= 2; level++) {
+    await admin.call('POST', '/api/admin/round/prepare');
+    await admin.call('POST', '/api/admin/round/start');
+    await admin.call('POST', '/api/admin/round/end');
+  }
   await admin.call('POST', '/api/admin/round/prepare');
   await admin.call('POST', '/api/admin/round/start');
 
@@ -77,7 +83,7 @@ async function main() {
   let displayUpdates = 0;
   display.on('state:public', () => displayUpdates++);
 
-  const questions = SEED_ROUNDS[0]!.challenges;
+  const questions = SEED_ROUNDS[2]!.challenges; // Level 3: Quick Brain
   const latencies: number[] = [];
   let failures = 0;
   let wrongScores = 0;

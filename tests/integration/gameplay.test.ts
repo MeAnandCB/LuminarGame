@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { SEED_ROUNDS } from '../../server/content/seed.js';
-import { TeamClient, adminState, boot, correct, playLive, setupEvent, wrong, type Booted, type Client } from './helpers.js';
+import { TeamClient, adminState, boot, correct, playLive, setupEvent, skipIntroRounds, wrong, type Booted, type Client } from './helpers.js';
 
 let b: Booted;
 afterEach(async () => {
@@ -14,12 +14,13 @@ const ledgerRows = (teamId: number, kind?: string) =>
 async function toLobby(opts: { teams: number; settings?: Record<string, unknown> }) {
   const env = await setupEvent(b, opts);
   await env.admin.post('/api/admin/registration/confirm');
+  await skipIntroRounds(env.admin);
   return env;
 }
 
 async function playLevel1(t: TeamClient, upTo = 12, wrongAt: number[] = []) {
   for (let i = 0; i < upTo; i++) {
-    const r = await t.answer(wrongAt.includes(i) ? wrong(1, i) : correct(1, i));
+    const r = await t.answer(wrongAt.includes(i) ? wrong(3, i) : correct(3, i));
     expect(r.status).toBe(200);
   }
 }
@@ -33,18 +34,18 @@ describe('Level 1 - Quick Brain', () => {
   it('scores 100 per correct answer plus speed bonus; wrong and unanswered score nothing', async () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 1 });
-    await admin.patch('/api/admin/round/1/config', { speedBonusMax: 20, speedWindowSec: 30 });
+    await admin.patch('/api/admin/round/3/config', { speedBonusMax: 20, speedWindowSec: 30 });
     await runLevel(admin);
     const t = teams[0]!;
-    const r1 = await t.answer(correct(1, 0)); // instant -> +20 bonus
+    const r1 = await t.answer(correct(3, 0)); // instant -> +20 bonus
     expect(r1.json).toMatchObject({ outcome: 'correct', points: 120, advanced: true });
     b.clock.advance(15_000);
-    const r2 = await t.answer(correct(1, 1)); // half the window -> +10
+    const r2 = await t.answer(correct(3, 1)); // half the window -> +10
     expect(r2.json.points).toBe(110);
     b.clock.advance(31_000);
-    const r3 = await t.answer(correct(1, 2)); // beyond the window -> no bonus
+    const r3 = await t.answer(correct(3, 2)); // beyond the window -> no bonus
     expect(r3.json.points).toBe(100);
-    const r4 = await t.answer(wrong(1, 3));
+    const r4 = await t.answer(wrong(3, 3));
     expect(r4.json).toMatchObject({ outcome: 'incorrect', points: 0, advanced: true });
     expect((await t.me()).score.total).toBe(330);
     expect((await t.me()).progress!.position).toBe(4); // wrong answers still consume the question: one answer per question
@@ -54,11 +55,11 @@ describe('Level 1 - Quick Brain', () => {
   it('optional wrong-answer penalty is applied once', async () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 1 });
-    await admin.patch('/api/admin/round/1/config', { wrongPenalty: 25, speedBonusMax: 0 });
+    await admin.patch('/api/admin/round/3/config', { wrongPenalty: 25, speedBonusMax: 0 });
     await runLevel(admin);
     const id = 'req-penalty-1';
-    const a = await teams[0]!.answer(wrong(1, 0), { requestId: id });
-    const dup = await teams[0]!.answer(wrong(1, 0), { requestId: id });
+    const a = await teams[0]!.answer(wrong(3, 0), { requestId: id });
+    const dup = await teams[0]!.answer(wrong(3, 0), { requestId: id });
     expect(a.json.points).toBe(-25);
     expect(dup.json.duplicate).toBe(true);
     expect((await teams[0]!.me()).score.total).toBe(-25);
@@ -70,8 +71,8 @@ describe('Level 1 - Quick Brain', () => {
     const { admin, teams } = await toLobby({ teams: 1 });
     await runLevel(admin);
     const t = teams[0]!;
-    const first = await t.answer(correct(1, 0), { requestId: 'retry-me-12345' });
-    const again = await t.answer(correct(1, 0), { requestId: 'retry-me-12345' });
+    const first = await t.answer(correct(3, 0), { requestId: 'retry-me-12345' });
+    const again = await t.answer(correct(3, 0), { requestId: 'retry-me-12345' });
     expect(again.json).toMatchObject({ outcome: 'correct', duplicate: true, points: first.json.points });
     expect(ledgerRows(t.state.team.id, 'answer')).toHaveLength(1);
     expect((await t.me()).progress!.position).toBe(1);
@@ -82,9 +83,9 @@ describe('Level 1 - Quick Brain', () => {
     const { admin, teams } = await toLobby({ teams: 1 });
     await runLevel(admin);
     const t = teams[0]!;
-    const items = SEED_ROUNDS[0]!.challenges.length;
-    const ids = b.h.ctx.db.all<{ id: number }>('SELECT c.id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE r.level = 1 ORDER BY position').map((r) => r.id);
-    const future = await t.answer(correct(1, 5), { challengeId: ids[5] });
+    const items = SEED_ROUNDS[2]!.challenges.length;
+    const ids = b.h.ctx.db.all<{ id: number }>('SELECT c.id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE r.level = 3 ORDER BY position').map((r) => r.id);
+    const future = await t.answer(correct(3, 5), { challengeId: ids[5] });
     expect(future.json.outcome).toBe('rejected');
     expect((await t.me()).score.total).toBe(0);
     await playLevel1(t);
@@ -97,13 +98,13 @@ describe('Level 1 - Quick Brain', () => {
   it('exactly-at-deadline is accepted, one millisecond later is late (documented inclusive rule)', async () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 2 });
-    await admin.patch('/api/admin/round/1/config', { durationSec: 30 });
+    await admin.patch('/api/admin/round/3/config', { durationSec: 30 });
     await runLevel(admin);
     b.clock.advance(30_000);
-    const onTime = await teams[0]!.answer(correct(1, 0));
+    const onTime = await teams[0]!.answer(correct(3, 0));
     expect(onTime.json.outcome).toBe('correct');
     b.clock.advance(1);
-    const late = await teams[1]!.answer(correct(1, 0));
+    const late = await teams[1]!.answer(correct(3, 0));
     expect(late.json.outcome).toBe('late');
     expect((await teams[1]!.me()).score.total).toBe(0);
     // late attempts are recorded for audit but do not consume the question
@@ -114,12 +115,12 @@ describe('Level 1 - Quick Brain', () => {
   it('the ticker ends the round when time expires and later answers are late', async () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 1 });
-    await admin.patch('/api/admin/round/1/config', { durationSec: 30 });
+    await admin.patch('/api/admin/round/3/config', { durationSec: 30 });
     await runLevel(admin);
     b.clock.advance(31_000);
     b.h.realtime.tick();
     expect((await adminState(admin)).event.state).toBe('ROUND_ENDED');
-    const r = await teams[0]!.answer(correct(1, 0));
+    const r = await teams[0]!.answer(correct(3, 0));
     expect(r.json.outcome).toBe('late');
     expect(b.h.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM leaderboard_snapshots WHERE scope = 'round:1'")!.n).toBe(1);
   });
@@ -127,15 +128,15 @@ describe('Level 1 - Quick Brain', () => {
   it('pausing freezes the clock and blocks scoring; repeated pause/resume keeps exact remaining time', async () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 1 });
-    await admin.patch('/api/admin/round/1/config', { durationSec: 120 });
+    await admin.patch('/api/admin/round/3/config', { durationSec: 120 });
     await runLevel(admin);
     b.clock.advance(20_000);
     await admin.post('/api/admin/round/pause');
     let s = await adminState(admin);
-    expect(s.rounds[0]!.remainingMs).toBe(100_000);
+    expect(s.rounds[2]!.remainingMs).toBe(100_000);
     b.clock.advance(500_000); // ages pass while paused
-    expect((await adminState(admin)).rounds[0]!.remainingMs).toBe(100_000);
-    const blocked = await teams[0]!.answer(correct(1, 0));
+    expect((await adminState(admin)).rounds[2]!.remainingMs).toBe(100_000);
+    const blocked = await teams[0]!.answer(correct(3, 0));
     expect(blocked.json.outcome).toBe('rejected');
     expect((await teams[0]!.me()).score.total).toBe(0);
     await admin.post('/api/admin/round/resume');
@@ -144,24 +145,24 @@ describe('Level 1 - Quick Brain', () => {
     b.clock.advance(1_000_000);
     await admin.post('/api/admin/round/resume');
     s = await adminState(admin);
-    expect(s.rounds[0]!.remainingMs).toBe(90_000);
-    expect(s.rounds[0]!.deadlineAt).toBe(b.clock.now() + 90_000);
-    expect((await teams[0]!.answer(correct(1, 0))).json.outcome).toBe('correct');
+    expect(s.rounds[2]!.remainingMs).toBe(90_000);
+    expect(s.rounds[2]!.deadlineAt).toBe(b.clock.now() + 90_000);
+    expect((await teams[0]!.answer(correct(3, 0))).json.outcome).toBe('correct');
   });
 
   it('answer keys appear only after the host reveals them', async () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 1 });
     await runLevel(admin);
-    expect((await admin.post('/api/admin/round/1/reveal', { reveal: true })).status).toBe(409); // not ended yet
+    expect((await admin.post('/api/admin/round/3/reveal', { reveal: true })).status).toBe(409); // not ended yet
     await playLevel1(teams[0]!);
     await admin.post('/api/admin/round/end');
     let pub = (await new TeamClient(b.base).get('/api/public/state')).json;
     expect(pub.reveal).toBeNull();
-    await admin.post('/api/admin/round/1/reveal', { reveal: true });
+    await admin.post('/api/admin/round/3/reveal', { reveal: true });
     pub = (await new TeamClient(b.base).get('/api/public/state')).json;
     expect(pub.reveal).toHaveLength(12);
-    expect(pub.reveal[0].answer).toBe('Jeethu Joseph');
+    expect(pub.reveal[0].answer).toBe('Central Processing Unit');
   });
 });
 
@@ -169,7 +170,7 @@ describe('Level 1 - skip and hints', () => {
   it('a team can skip a question: no points, no penalty, and the skip is idempotent', async () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 1 });
-    await admin.patch('/api/admin/round/1/config', { wrongPenalty: 50 });
+    await admin.patch('/api/admin/round/3/config', { wrongPenalty: 50 });
     await runLevel(admin);
     const t = teams[0]!;
     const first = await t.skip({ requestId: 'skip-request-01' });
@@ -182,16 +183,16 @@ describe('Level 1 - skip and hints', () => {
     expect(ledgerRows(me.team.id)).toHaveLength(0);
     expect(me.history[0]).toMatchObject({ outcome: 'skipped', position: 0 });
     // a stale skip for an old question is refused
-    const ids = b.h.ctx.db.all<{ id: number }>('SELECT c.id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE r.level = 1 ORDER BY position').map((r) => r.id);
+    const ids = b.h.ctx.db.all<{ id: number }>('SELECT c.id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE r.level = 3 ORDER BY position').map((r) => r.id);
     expect((await t.skip({ challengeId: ids[0] })).status).toBe(409);
     // the next question can still be answered normally
-    expect((await t.answer(correct(1, 1))).json.outcome).toBe('correct');
+    expect((await t.answer(correct(3, 1))).json.outcome).toBe('correct');
   });
 
   it('skipping can be switched off by the host, and works until the end of the quiz', async () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 1 });
-    await admin.patch('/api/admin/round/1/config', { allowSkip: false });
+    await admin.patch('/api/admin/round/3/config', { allowSkip: false });
     await runLevel(admin);
     const r = await teams[0]!.skip();
     expect(r.status).toBe(403);
@@ -212,9 +213,9 @@ describe('Level 1 - skip and hints', () => {
   it('hints cost points once per question when the host enables them', async () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 1 });
-    const id = b.h.ctx.db.get<{ id: number }>('SELECT c.id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE r.level = 1 AND position = 0')!.id;
+    const id = b.h.ctx.db.get<{ id: number }>('SELECT c.id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE r.level = 3 AND position = 0')!.id;
     await admin.patch(`/api/admin/challenges/${id}`, { hint: 'Think of Mohanlal and a cable operator.' });
-    await admin.patch('/api/admin/round/1/config', { hintsEnabled: true, hintPenalty: 30 });
+    await admin.patch('/api/admin/round/3/config', { hintsEnabled: true, hintPenalty: 30 });
     await runLevel(admin);
     const t = teams[0]!;
     const rs = await Promise.all([t.hint(), t.hint(), t.hint()]);
@@ -243,7 +244,7 @@ describe('qualification and finalisation', () => {
     await admin.post('/api/admin/round/end');
     // Level 2 (live): Team 7 and Team 6 get everything right, the rest answer nothing
     await runLevel(admin);
-    await playLive(admin, teams, (i) => (i >= 5 ? 'LIVE_CORRECT' : null), 2);
+    await playLive(admin, teams, (i) => (i >= 5 ? 'LIVE_CORRECT' : null), 4);
     expect((await adminState(admin)).event.state).toBe('ROUND_ENDED');
 
     // finalists cannot be prepared without qualification
@@ -278,7 +279,7 @@ describe('qualification and finalisation', () => {
     expect((await outsider.me()).eligible).toBe(false);
 
     // Showdown: the first finalist is perfect, the others are wrong on question 1 only
-    await playLive(admin, finalistTeams, (i, q) => (i === 0 || q > 0 ? 'LIVE_CORRECT' : 'LIVE_WRONG'), 3);
+    await playLive(admin, finalistTeams, (i, q) => (i === 0 || q > 0 ? 'LIVE_CORRECT' : 'LIVE_WRONG'), 5);
     expect((await adminState(admin)).event.state).toBe('ROUND_ENDED');
     await admin.post('/api/admin/event/complete');
 
@@ -302,12 +303,12 @@ describe('qualification and finalisation', () => {
     const csv = await admin.get('/api/admin/export.csv');
     expect(csv.status).toBe(200);
     const lines = csv.text.replace('\ufeff', '').trim().split('\r\n');
-    expect(lines[0]).toBe('Rank,Team,Player 1,Player 2,Level 1 points,Level 2 points,Level 3 points,Unassigned adjustments,Total,Challenges solved,Finalist,Tied on all criteria');
+    expect(lines[0]).toBe('Rank,Team,Player 1,Player 2,Level 1 points,Level 2 points,Level 3 points,Level 4 points,Level 5 points,Unassigned adjustments,Total,Challenges solved,Finalist,Tied on all criteria');
     expect(lines).toHaveLength(8);
     for (const row of end.leaderboard) {
       const cells = lines.find((l) => l.split(',')[1] === row.name)!.split(',');
       expect(Number(cells[0])).toBe(row.rank);
-      expect(Number(cells[8])).toBe(row.total);
+      expect(Number(cells[10])).toBe(row.total);
     }
   });
 
@@ -332,12 +333,12 @@ describe('qualification and finalisation', () => {
   it('a tie at the cutoff is resolved by the documented tie-breaker (earliest solve wins)', async () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 2, settings: { finalists: 1 } });
-    await admin.patch('/api/admin/round/1/config', { speedBonusMax: 0 });
+    await admin.patch('/api/admin/round/3/config', { speedBonusMax: 0 });
     await runLevel(admin);
     // equal points, equal solved; Team 2 gets there first
-    await teams[1]!.answer(correct(1, 0));
+    await teams[1]!.answer(correct(3, 0));
     b.clock.advance(5000);
-    await teams[0]!.answer(correct(1, 0));
+    await teams[0]!.answer(correct(3, 0));
     await admin.post('/api/admin/round/end');
     await runLevel(admin);
     await admin.post('/api/admin/round/end');
@@ -373,12 +374,12 @@ describe('state machine enforcement over HTTP', () => {
   it('refuses to start a round with a missing answer key or invalid config', async () => {
     b = await boot();
     const { admin } = await toLobby({ teams: 1 });
-    b.h.ctx.db.run("UPDATE challenges SET answers = '[]' WHERE round_id = (SELECT id FROM rounds WHERE level = 1) AND position = 0");
+    b.h.ctx.db.run("UPDATE challenges SET answers = '[]' WHERE round_id = (SELECT id FROM rounds WHERE level = 3) AND position = 0");
     const r = await admin.post('/api/admin/round/prepare');
     expect(r.status).toBe(409);
     expect(r.json.error.code).toBe('INVALID_ROUND');
-    expect((await admin.patch('/api/admin/round/1/config', { speedBonusMax: 500 })).status).toBe(400);
-    expect((await admin.patch('/api/admin/round/1/config', { bogus: 1 })).status).toBe(400);
+    expect((await admin.patch('/api/admin/round/3/config', { speedBonusMax: 500 })).status).toBe(400);
+    expect((await admin.patch('/api/admin/round/3/config', { bogus: 1 })).status).toBe(400);
     expect((await admin.patch('/api/admin/challenges/1', { points: -4 })).status).toBe(400);
   });
 
@@ -386,7 +387,7 @@ describe('state machine enforcement over HTTP', () => {
     b = await boot();
     const { admin } = await toLobby({ teams: 1 });
     await runLevel(admin);
-    expect((await admin.patch('/api/admin/round/1/config', { speedBonusMax: 5 })).status).toBe(409);
+    expect((await admin.patch('/api/admin/round/3/config', { speedBonusMax: 5 })).status).toBe(409);
     const id = b.h.ctx.db.get<{ id: number }>('SELECT id FROM challenges LIMIT 1')!.id;
     expect((await admin.patch(`/api/admin/challenges/${id}`, { points: 5 })).status).toBe(409);
   });
@@ -397,7 +398,7 @@ describe('admin manual intervention', () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 2 });
     await runLevel(admin);
-    await teams[0]!.answer(correct(1, 0));
+    await teams[0]!.answer(correct(3, 0));
     const t2 = teams[1]!.state.team.id;
     expect((await admin.post(`/api/admin/teams/${t2}/score`, { points: 500, reason: '' })).status).toBe(400);
     expect((await admin.post(`/api/admin/teams/${t2}/score`, { points: 0, reason: 'nothing' })).status).toBe(400);
@@ -416,7 +417,7 @@ describe('admin manual intervention', () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 2 });
     await runLevel(admin);
-    await teams[0]!.answer(correct(1, 0));
+    await teams[0]!.answer(correct(3, 0));
     expect((await admin.post('/api/admin/event/reset', {})).status).toBe(400);
     expect((await admin.post('/api/admin/event/reset', { confirm: 'reset' })).status).toBe(400);
     expect((await admin.post('/api/admin/event/reset', { confirm: 'RESET' })).status).toBe(200);
@@ -436,7 +437,8 @@ describe('admin manual intervention', () => {
     const actions = (await adminState(admin)).audit.map((a) => a.action);
     expect(actions).toEqual(expect.arrayContaining(['event.create', 'registration.open', 'registration.confirm', 'round.prepare', 'round.start', 'team.join']));
     const history = b.h.ctx.db.all<{ to_state: string }>('SELECT to_state FROM event_state_history ORDER BY id').map((r) => r.to_state);
-    expect(history).toEqual(['SETUP', 'REGISTRATION_OPEN', 'LOBBY', 'ROUND_READY', 'ROUND_RUNNING']);
+    expect(history.slice(0, 3)).toEqual(['SETUP', 'REGISTRATION_OPEN', 'LOBBY']);
+    expect(history.slice(-2)).toEqual(['ROUND_READY', 'ROUND_RUNNING']);
   });
 });
 
@@ -446,13 +448,13 @@ describe('failure handling', () => {
     const { admin, teams } = await toLobby({ teams: 1 });
     await runLevel(admin);
     b.h.ctx.db.exec("CREATE TRIGGER boom BEFORE INSERT ON score_ledger BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END");
-    const fail = await teams[0]!.answer(correct(1, 0), { requestId: 'flaky-request-1' });
+    const fail = await teams[0]!.answer(correct(3, 0), { requestId: 'flaky-request-1' });
     expect(fail.status).toBe(500);
     expect(JSON.stringify(fail.json)).not.toMatch(/disk|sqlite|trigger/i);
     expect(b.h.ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM answer_submissions')!.n).toBe(0);
     expect((await teams[0]!.me()).progress!.position).toBe(0);
     b.h.ctx.db.exec('DROP TRIGGER boom');
-    const retry = await teams[0]!.answer(correct(1, 0), { requestId: 'flaky-request-1' });
+    const retry = await teams[0]!.answer(correct(3, 0), { requestId: 'flaky-request-1' });
     expect(retry.json).toMatchObject({ outcome: 'correct' });
     expect(ledgerRows(teams[0]!.state.team.id, 'answer')).toHaveLength(1);
   });
@@ -461,7 +463,7 @@ describe('failure handling', () => {
     b = await boot();
     const { admin, teams } = await toLobby({ teams: 1 });
     await runLevel(admin);
-    await teams[0]!.answer(correct(1, 0));
+    await teams[0]!.answer(correct(3, 0));
     const row = b.h.ctx.db.get<any>("SELECT * FROM answer_submissions WHERE outcome = 'correct'")!;
     expect(() =>
       b.h.ctx.db.run(

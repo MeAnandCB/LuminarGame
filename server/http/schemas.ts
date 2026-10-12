@@ -80,6 +80,8 @@ export const configPatchSchema = z
     lives: z.number().int().min(0).max(10),
     stealPoints: z.number().int().min(0).max(1000),
     survivorBonus: z.number().int().min(0).max(5000),
+    lineBonus: z.number().int().min(0).max(1000),
+    blackoutBonus: z.number().int().min(0).max(5000),
   })
   .partial()
   .strict();

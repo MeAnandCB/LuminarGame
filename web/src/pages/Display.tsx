@@ -3,7 +3,7 @@ import type { LeaderboardRow, PublicState } from '../../../shared/types';
 import { fmtClock, remaining, useLive, useServerNow } from '../lib/realtime';
 import { ConnBadge, Leaderboard, QrImage, Spinner } from '../components/ui';
 import { LiveView } from './display/Live';
-import { Backdrop, Emblem, LEVELS, LevelIntro, themeFor } from '../components/Backdrop';
+import { Backdrop, Emblem, FINALE_LEVEL, LEVELS, LevelIntro, skinOf, themeFor } from '../components/Backdrop';
 
 export function DisplayApp() {
   const live = useLive('display');
@@ -19,13 +19,13 @@ export function DisplayApp() {
 
   const st = pub?.event?.state;
   const inRound = st === 'ROUND_READY' || st === 'ROUND_RUNNING' || st === 'ROUND_PAUSED' || st === 'ROUND_ENDED';
-  const level = st === 'QUALIFICATION' || st === 'EVENT_COMPLETED' ? 3 : pub?.round?.level;
+  const level = st === 'QUALIFICATION' || st === 'EVENT_COMPLETED' ? FINALE_LEVEL : pub?.round?.level;
   const theme = themeFor(st, inRound ? level : undefined);
   return (
     <>
     <Backdrop theme={theme} />
-    {inRound && <LevelIntro level={level} />}
-    <main data-level={level} className="stage flex min-h-screen flex-col gap-[1.2vw] p-[1.6vw] text-[clamp(14px,1.45vw,30px)]">
+    <LevelIntro level={inRound ? level : undefined} reset={st === 'SETUP' || st === 'REGISTRATION_OPEN' || st === 'LOBBY' || !st} />
+    <main data-level={skinOf(level)} className="stage flex min-h-screen flex-col gap-[1.2vw] p-[1.6vw] text-[clamp(14px,1.45vw,30px)]">
       <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="flex items-center gap-3">
           <span aria-hidden="true" className="logo-b grid h-[3.2vw] w-[3.2vw] min-h-10 min-w-10 place-items-center rounded-xl bg-panel2 text-[1.8vw] font-black text-neon">B</span>
@@ -162,7 +162,7 @@ function RoundView({ pub, now }: { pub: PublicState; now: number }) {
   const paused = state === 'ROUND_PAUSED';
   const ended = state === 'ROUND_ENDED';
   const unit = 'questions';
-  const eligible = round.level === 3 ? pub.leaderboard.filter((r) => r.qualified) : pub.leaderboard;
+  const eligible = round.kind === 'showdown' ? pub.leaderboard.filter((r) => r.qualified) : pub.leaderboard;
   return (
     <div className="grid flex-1 grid-cols-1 gap-[1.6vw] lg:grid-cols-[minmax(0,4fr)_minmax(0,7fr)]">
       <section className="flex flex-col gap-[0.8vw]">
@@ -203,7 +203,7 @@ function RoundView({ pub, now }: { pub: PublicState; now: number }) {
       <section className="flex flex-col gap-[1vw]">
         <h2 className="text-[1.5em] font-black">{pub.provisional ? 'Live leaderboard' : ended ? 'Round standings' : 'Leaderboard'}</h2>
         {pub.scoresHidden && <p className="rounded-lg border border-warn px-3 py-2 text-warn">Scores are hidden until the round ends.</p>}
-        <BoardColumns rows={round.level === 3 ? pub.leaderboard.filter((r) => r.qualified !== false) : pub.leaderboard} pub={pub} showProgress={!ended} />
+        <BoardColumns rows={round.kind === 'showdown' ? pub.leaderboard.filter((r) => r.qualified !== false) : pub.leaderboard} pub={pub} showProgress={!ended} />
         {ended && pub.reveal && (
           <div className="panel p-[1.2vw]">
             <h3 className="mb-2 text-[1.1em] font-black text-[var(--accent)]">Answer key</h3>
@@ -223,8 +223,8 @@ function Qualification({ pub }: { pub: PublicState }) {
   return (
     <div className="grid flex-1 grid-cols-1 gap-[2vw] lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
       <section className="panel glow p-[2vw]" data-level="3">
-        <h2 className="text-[2.4em] font-black text-[var(--accent)]"><Emblem level={3} />Finalists</h2>
-        <p className="text-muted">These teams advance to The Final Hack</p>
+        <h2 className="text-[2.4em] font-black text-[var(--accent)]"><Emblem level={FINALE_LEVEL} />Finalists</h2>
+        <p className="text-muted">These teams advance to the Final Showdown</p>
         <ol className="mt-[1vw] space-y-[0.7vw]">
           {pub.finalists.map((f, i) => (
             <li key={f.teamId} className="joined flex items-center gap-4 rounded-xl border border-ok/60 bg-[#052e16] px-[1.2vw] py-[0.8vw] text-[1.5em] font-black" style={{ animationDelay: `${i * 350}ms` }}>
@@ -236,7 +236,7 @@ function Qualification({ pub }: { pub: PublicState }) {
         </ol>
       </section>
       <section>
-        <h2 className="mb-2 text-[1.5em] font-black">Standings after Level {Math.max(1, (pub.round?.level ?? 2))}</h2>
+        <h2 className="mb-2 text-[1.5em] font-black">Standings after Level {Math.max(1, (pub.round?.level ?? 4))}</h2>
         <BoardColumns rows={pub.leaderboard} pub={pub} />
       </section>
     </div>

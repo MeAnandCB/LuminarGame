@@ -1,19 +1,26 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 
-/** 0 = lobby/neutral, 1-3 = level themes, 4 = champion finale. */
-export type Theme = 0 | 1 | 2 | 3 | 4;
+/** 0 = lobby/neutral, 1-3 = Quick Brain / Reel Rush / Showdown, 4 = champion finale, 5 = Tech Faces, 6 = Tech Bingo. */
+export type Theme = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
-export const LEVELS: Record<number, { name: string; tag: string; icon: string }> = {
-  1: { name: 'Quick Brain', tag: 'Think fast. Answer smart.', icon: '🧠' },
-  2: { name: 'Reel Rush', tag: 'Speed. Streaks. Double or nothing.', icon: '🎬' },
-  3: { name: 'Final Showdown', tag: 'Lives on the line. Last team standing.', icon: '🔥' },
+/** `skin` is the value of the data-level attribute that the stylesheet keys its per-game look on. */
+export const LEVELS: Record<number, { name: string; tag: string; icon: string; skin: string; theme: Theme }> = {
+  1: { name: 'Tech Faces', tag: 'Who is behind the tech?', icon: '📸', skin: 'faces', theme: 5 },
+  2: { name: 'Tech Bingo', tag: 'Read the clue. Mark the tile. Chase the line.', icon: '🎯', skin: 'bingo', theme: 6 },
+  3: { name: 'Quick Brain', tag: 'Think fast. Answer smart.', icon: '🧠', skin: '1', theme: 1 },
+  4: { name: 'Reel Rush', tag: 'Speed. Streaks. Double or nothing.', icon: '⚡', skin: '2', theme: 2 },
+  5: { name: 'Final Showdown', tag: 'Lives on the line. Last team standing.', icon: '🔥', skin: '3', theme: 3 },
 };
+
+/** The last level; qualification and the podium reuse its look. */
+export const FINALE_LEVEL = 5;
+
+export const skinOf = (level: number | undefined): string | undefined => (level ? LEVELS[level]?.skin : undefined);
 
 export function themeFor(state: string | undefined, level: number | undefined): Theme {
   if (state === 'EVENT_COMPLETED') return 4;
   if (state === 'QUALIFICATION') return 3;
-  if (level === 1 || level === 2 || level === 3) return level;
-  return 0;
+  return (level && LEVELS[level]?.theme) || 0;
 }
 
 const rnd = (i: number, salt: number) => {
@@ -25,6 +32,8 @@ const css = (v: Record<string, string | number>) => v as CSSProperties;
 const BITS = Array.from({ length: 22 }, (_, i) => ({ x: rnd(i, 1) * 100, d: 9 + rnd(i, 2) * 10, s: -rnd(i, 3) * 14, c: rnd(i, 4) > 0.5 ? '"1"' : '"0"', z: 0.8 + rnd(i, 5) * 1.4 }));
 const STREAKS = Array.from({ length: 14 }, (_, i) => ({ y: rnd(i, 6) * 100, w: 14 + rnd(i, 7) * 40, d: 0.9 + rnd(i, 8) * 1.8, s: -rnd(i, 9) * 3 }));
 const EMBERS = Array.from({ length: 30 }, (_, i) => ({ x: rnd(i, 10) * 100, d: 4 + rnd(i, 11) * 6, s: -rnd(i, 12) * 8, z: 3 + rnd(i, 13) * 7, dx: (rnd(i, 14) - 0.5) * 140 }));
+const BOKEH = Array.from({ length: 16 }, (_, i) => ({ x: rnd(i, 21) * 100, z: 3 + rnd(i, 22) * 9, d: 11 + rnd(i, 23) * 12, s: -rnd(i, 24) * 20, c: ['#a3e635', '#34d399', '#fde047', '#67e8f9'][i % 4]! }));
+const BALLS = Array.from({ length: 14 }, (_, i) => ({ x: rnd(i, 25) * 96, d: 12 + rnd(i, 26) * 12, s: -rnd(i, 27) * 22, ch: `"${'BINGO'[i % 5]}"`, c: ['#ff5fa2', '#ffd166', '#7dd3fc', '#c4b5fd', '#86efac'][i % 5]! }));
 const CONFETTI = Array.from({ length: 70 }, (_, i) => ({
   x: rnd(i, 15) * 100, d: 4 + rnd(i, 16) * 5, s: -rnd(i, 17) * 9, w: 7 + rnd(i, 18) * 8, h: 10 + rnd(i, 19) * 12, r: rnd(i, 20) * 360,
   c: ['#fbbf24', '#22d3ee', '#c084fc', '#fb7185', '#4ade80', '#fb923c', '#ffffff'][i % 7]!,
@@ -65,6 +74,19 @@ export function Backdrop({ theme }: { theme: Theme }) {
           {EMBERS.map((e, i) => <i key={i} className="bd-ember" style={css({ '--x': `${e.x}%`, '--d': `${e.d}s`, '--s': `${e.s}s`, '--z': `${e.z}px`, '--dx': `${e.dx}px` })} />)}
         </>
       )}
+      {theme === 5 && (
+        <>
+          <i className="bd-focus" />
+          <i className="bd-sweep" />
+          {BOKEH.map((b, i) => <i key={i} className="bd-bokeh" style={css({ '--x': `${b.x}%`, '--z': `${b.z}vmin`, '--d': `${b.d}s`, '--s': `${b.s}s`, '--c': b.c })} />)}
+        </>
+      )}
+      {theme === 6 && (
+        <>
+          <i className="bd-dots" />
+          {BALLS.map((b, i) => <i key={i} className="bd-ball" style={css({ '--x': `${b.x}%`, '--d': `${b.d}s`, '--s': `${b.s}s`, '--ch': b.ch, '--c': b.c })} />)}
+        </>
+      )}
       {theme === 4 && (
         <>
           <i className="bd-rays" />
@@ -87,8 +109,18 @@ export function Confetti() {
 }
 
 /** Full-screen cinematic title card, shown once per level per browser tab. Hides itself with a CSS animation. */
-export function LevelIntro({ level }: { level: number | undefined }) {
+export function LevelIntro({ level, reset }: { level: number | undefined; reset?: boolean }) {
   const [show, setShow] = useState<number | null>(null);
+  useEffect(() => {
+    // Before the first round (a fresh or reset event) every title card plays again.
+    if (!reset) return;
+    try {
+      sessionStorage.removeItem('bb-intro');
+    } catch {
+      /* storage unavailable */
+    }
+    setShow(null);
+  }, [reset]);
   useEffect(() => {
     if (!level || !LEVELS[level]) return;
     try {
@@ -103,7 +135,7 @@ export function LevelIntro({ level }: { level: number | undefined }) {
   if (!show) return null;
   const m = LEVELS[show]!;
   return (
-    <div key={show} className="intro" data-level={show} aria-hidden="true">
+    <div key={show} className="intro" data-level={m.skin} aria-hidden="true">
       <div className="intro-flash" />
       <div className="intro-body">
         <div className="intro-icon" data-t={m.icon} />

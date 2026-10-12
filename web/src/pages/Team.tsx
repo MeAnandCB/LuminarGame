@@ -7,7 +7,7 @@ import { submitAnswer } from '../lib/submit';
 import { ConnBadge, ErrorBanner, Leaderboard, Spinner } from '../components/ui';
 import { LivePlay } from './team/LivePlay';
 import { OptionButtons } from '../components/OptionButtons';
-import { Backdrop, Emblem, LEVELS, LevelIntro, themeFor } from '../components/Backdrop';
+import { Backdrop, Emblem, FINALE_LEVEL, LEVELS, LevelIntro, skinOf, themeFor } from '../components/Backdrop';
 import { AnimatedNumber } from '../components/ui';
 
 type Boot = 'loading' | 'anon' | 'in';
@@ -46,12 +46,12 @@ export function TeamApp() {
 
 function Shell({ children, state, level }: { children: React.ReactNode; state?: string; level?: number }) {
   const inRound = state === 'ROUND_READY' || state === 'ROUND_RUNNING' || state === 'ROUND_PAUSED' || state === 'ROUND_ENDED';
-  const lv = state === 'QUALIFICATION' || state === 'EVENT_COMPLETED' ? 3 : level;
+  const lv = state === 'QUALIFICATION' || state === 'EVENT_COMPLETED' ? FINALE_LEVEL : level;
   return (
     <>
     <Backdrop theme={themeFor(state, inRound ? lv : undefined)} />
-    {inRound && <LevelIntro level={lv} />}
-    <main data-level={inRound || state === 'QUALIFICATION' || state === 'EVENT_COMPLETED' ? lv : undefined} className="stage mx-auto flex min-h-screen w-full max-w-xl flex-col gap-4 px-4 py-5">
+    <LevelIntro level={inRound ? lv : undefined} reset={state === 'SETUP' || state === 'REGISTRATION_OPEN' || state === 'LOBBY'} />
+    <main data-level={inRound || state === 'QUALIFICATION' || state === 'EVENT_COMPLETED' ? skinOf(lv) : undefined} className="stage mx-auto flex min-h-screen w-full max-w-xl flex-col gap-4 px-4 py-5">
       <header className="flex items-center gap-2">
         <span aria-hidden="true" className="logo-b grid h-9 w-9 place-items-center rounded-lg bg-panel2 font-black text-neon">B</span>
         <h1 className="text-lg font-black tracking-wide">BRAINBYTE <span className="text-violet">ARENA</span></h1>
@@ -227,7 +227,7 @@ function Screen({ team, pub, live, now }: { team: TeamState; pub: PublicState | 
   if (st === 'QUALIFICATION') {
     return (
       <Card title="Qualification" icon={team.qualified ? '🏆' : '🎯'}>
-        {team.qualified ? <p className="text-xl font-bold text-ok">✔ You qualified for The Final Hack!</p> : <p className="text-xl font-bold">You did not qualify for the final – thank you for playing!</p>}
+        {team.qualified ? <p className="text-xl font-bold text-ok">✔ You qualified for the Final Showdown!</p> : <p className="text-xl font-bold">You did not qualify for the final – thank you for playing!</p>}
         <p className="mt-2 text-muted">Finalists: {pub?.finalists.map((f) => f.name).join(', ') || '…'}</p>
         <p className="mt-3">Wait for the host to start the final level.</p>
       </Card>
@@ -270,7 +270,7 @@ function Screen({ team, pub, live, now }: { team: TeamState; pub: PublicState | 
 
 function Card({ title, icon, children, level, spin }: { title: string; icon: string; children: React.ReactNode; level?: number; spin?: boolean }) {
   return (
-    <section data-level={level} className={`panel pop p-5 ${level ? 'glow' : ''}`} aria-labelledby="card-h">
+    <section data-level={skinOf(level)} className={`panel pop p-5 ${level ? 'glow' : ''}`} aria-labelledby="card-h">
       <h2 id="card-h" className="mb-3 text-2xl font-black">{level ? <Emblem level={level} /> : <span aria-hidden="true" className={spin ? 'crown' : ''}>{icon} </span>}{title}</h2>
       {level && LEVELS[level] && <p className="-mt-2 mb-3 text-sm italic text-muted">{LEVELS[level]!.tag}</p>}
       {children}
@@ -363,7 +363,7 @@ function Play({ team, round, live, now, paused }: { team: TeamState; round: NonN
   const timeUp = left <= 0 && !paused;
 
   return (
-    <section data-level={round.level} className="flex flex-col gap-3" aria-label="Current question">
+    <section data-level={skinOf(round.level)} className="flex flex-col gap-3" aria-label="Current question">
       <div className="panel flex items-center justify-between gap-3 px-4 py-3">
         <div>
           <p className="text-xs font-bold uppercase tracking-widest text-[var(--accent)]"><Emblem level={round.level} />Level {round.level} · Quick Brain</p>

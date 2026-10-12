@@ -1,0 +1,11 @@
+Photos from Wikimedia Commons (free licences). Format: file | source file | author | licence
+01.jpg | Steve_Jobs_Headshot_2010_(cropped_4).jpg | Matthew Yohe | CC BY-SA 3.0
+02.jpg | Bill_Gates_at_the_European_Commission_-_P067383-987995_(cropped)_5.jpg | Bogdan Hoyaux / European Union | CC BY 4.0
+03.jpg | Elon_Musk_-_54820081119_(cropped).jpg | Gage Skidmore | CC BY-SA 4.0
+04.jpg | P20260929DT-1655_(55561811540)_(cropped_2).jpg | The White House | Public domain
+05.jpg | Sundar_Pichai_-_2023_(cropped).jpg | Photographer: Lukasz Kobus (European Commission) | CC BY 4.0
+06.jpg | MS-Exec-Nadella-Satya-2017-08-31-22_(cropped).jpg | Brian Smale and Microsoft | CC BY-SA 4.0
+07.jpg | 260202-D-PM193-2205_SECWAR_Arsenal_of_Freedom_Tour_-_Florida_(3x4_cropped_on_Bezos_and_rotated).jpg | SECWAR | Public domain
+08.jpg | Larry_Page_in_the_European_Parliament,_17.06.2009_(cropped_2).jpg | Stansfield PL | CC BY-SA 3.0
+09.jpg | LinuxCon_Europe_Linus_Torvalds_03_(cropped).jpg | Krd (photo)Von Sprat (crop/extraction) | CC BY-SA 4.0
+10.jpg | Jen-Hsun_Huang_2025.jpg | The White House | Public domain

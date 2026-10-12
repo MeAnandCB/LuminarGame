@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { SEED_ROUNDS } from '../content/seed.js';
 import { assertTransition } from '../game/stateMachine.js';
+import { BINGO_CELLS } from '../game/bingo.js';
 import { DEFAULT_EVENT_SETTINGS, DEFAULT_ROUND_CONFIG, eventSettingsSchema, isLive, liveDurationSec, parseRoundConfig } from '../game/scoring.js';
 import { initLive, liveAdvance, onRoundEnd } from '../games/live.js';
 import { pauseTimer, resumeTimer, startTimer } from '../game/timer.js';
@@ -8,8 +9,8 @@ import { AppError, type ChallengeRow, type Ctx, type EventRow, type RoundRow } f
 import { computeStandings, writeSnapshot } from './standings.js';
 import type { EventSettings, EventState } from '../../shared/types.js';
 
-const QUALIFY_AFTER_LEVEL = 2;
-const FINAL_LEVEL = 3;
+export const QUALIFY_AFTER_LEVEL = 4;
+export const FINAL_LEVEL = 5;
 
 function generatePin(ctx: Ctx): string {
   for (let i = 0; i < 50; i++) {
@@ -25,7 +26,7 @@ function seedRounds(ctx: Ctx, eventId: number): void {
     if (isLive(r.kind)) cfg.durationSec = liveDurationSec(r.challenges.length, cfg);
     const { lastId } = ctx.db.run('INSERT INTO rounds (event_id, level, name, kind, config, instructions) VALUES (?,?,?,?,?,?)', eventId, r.level, r.name, r.kind, JSON.stringify(cfg), r.instructions);
     r.challenges.forEach((c, i) => {
-      ctx.db.run('INSERT INTO challenges (round_id, position, kind, title, prompt, options, answers, points, hint) VALUES (?,?,?,?,?,?,?,?,?)', lastId, i, c.kind, c.title, c.prompt, c.options ? JSON.stringify(c.options) : null, JSON.stringify(c.answers), c.points, c.hint ?? null);
+      ctx.db.run('INSERT INTO challenges (round_id, position, kind, title, prompt, options, answers, points, hint, image) VALUES (?,?,?,?,?,?,?,?,?,?)', lastId, i, c.kind, c.title, c.prompt, c.options ? JSON.stringify(c.options) : null, JSON.stringify(c.answers), c.points, c.hint ?? null, c.image ?? null);
     });
   }
 }
@@ -85,6 +86,12 @@ export function resetEvent(ctx: Ctx, actor: string): EventRow {
     ctx.db.run('DELETE FROM teams WHERE event_id = ?', ev.id); // cascades sessions, progress, hints, submissions, ledger, snapshots
     ctx.db.run('DELETE FROM score_ledger WHERE event_id = ?', ev.id);
     ctx.db.run('DELETE FROM leaderboard_snapshots WHERE event_id = ?', ev.id);
+    ctx.db.run('DELETE FROM answer_submissions WHERE event_id = ?', ev.id);
+    // Rounds are kept, so their live bookkeeping must go too: a leftover "resolved" row makes the replay skip that question's scoring.
+    ctx.db.run('DELETE FROM live_question_log WHERE round_id IN (SELECT id FROM rounds WHERE event_id = ?)', ev.id);
+    ctx.db.run('DELETE FROM live_team_state WHERE round_id IN (SELECT id FROM rounds WHERE event_id = ?)', ev.id);
+    ctx.db.run('DELETE FROM event_state_history WHERE event_id = ?', ev.id);
+    ctx.db.run('DELETE FROM audit_logs WHERE event_id = ?', ev.id); // a reset starts the event from a clean slate
     ctx.db.run("UPDATE rounds SET status='pending', started_at=NULL, deadline_at=NULL, remaining_ms=NULL, heartbeat_at=NULL, ended_at=NULL, answers_revealed=0, live_index=0, live_phase=NULL, live_clock_start=0, live_q_start=0 WHERE event_id = ?", ev.id);
     ctx.db.run('UPDATE events SET state = ?, current_round_id = NULL, qualification_frozen = 0, completed_at = NULL, updated_at = ? WHERE id = ?', 'SETUP', ctx.nowIso(), ev.id);
     ctx.db.run('INSERT INTO event_state_history (event_id, from_state, to_state, actor, reason, created_at) VALUES (?,?,?,?,?,?)', ev.id, ev.state, 'SETUP', actor, 'event reset', ctx.nowIso());
@@ -138,7 +145,7 @@ export function confirmTeams(ctx: Ctx, actor: string): void {
 export function validateRound(ctx: Ctx, round: RoundRow): void {
   const items = ctx.challenges(round.id);
   if (items.length === 0) throw new AppError(409, 'INVALID_ROUND', `${round.name} has no questions.`);
-  if (!['quiz', 'lightning', 'showdown'].includes(round.kind)) throw new AppError(409, 'INVALID_ROUND', `${round.name} was created by an older version of the game. Create a new event to use the current games.`);
+  if (!['quiz', 'lightning', 'showdown', 'faces', 'bingo'].includes(round.kind)) throw new AppError(409, 'INVALID_ROUND', `${round.name} was created by an older version of the game. Create a new event to use the current games.`);
   try {
     parseRoundConfig(round.kind, JSON.parse(round.config));
   } catch {
@@ -150,8 +157,13 @@ export function validateRound(ctx: Ctx, round: RoundRow): void {
     if (c.kind === 'choice') {
       const options = c.options ? (JSON.parse(c.options) as { id: string }[]) : [];
       if (options.length < 2 || !answers.every((a) => options.some((o) => o.id === a))) throw new AppError(409, 'INVALID_ROUND', `${round.name}: "${c.title}" has an invalid answer key.`);
+      if (round.kind === 'bingo' && options.length !== BINGO_CELLS) throw new AppError(409, 'INVALID_ROUND', `${round.name}: "${c.title}" must offer exactly ${BINGO_CELLS} bingo tiles.`);
+    } else if (round.kind === 'faces' || round.kind === 'bingo') {
+      throw new AppError(409, 'INVALID_ROUND', `${round.name}: "${c.title}" must be multiple choice.`);
     }
+    if (round.kind === 'faces' && !c.image) throw new AppError(409, 'INVALID_ROUND', `${round.name}: "${c.title}" has no picture.`);
   }
+  if (round.kind === 'bingo' && new Set(items.map((c) => (JSON.parse(c.answers) as string[])[0])).size !== items.length) throw new AppError(409, 'INVALID_ROUND', `${round.name}: every call must name a different tile.`);
 }
 
 function nextRound(ctx: Ctx, ev: EventRow): RoundRow | undefined {

@@ -5,9 +5,9 @@ import { fmtClock, type Live } from '../../lib/realtime';
 import { submitAnswer } from '../../lib/submit';
 import { ErrorBanner, Spinner } from '../../components/ui';
 import { OptionButtons } from '../../components/OptionButtons';
-import { Emblem } from '../../components/Backdrop';
-
-const NAME: Record<number, string> = { 2: 'Reel Rush', 3: 'Final Showdown' };
+import { Emblem, LEVELS, skinOf } from '../../components/Backdrop';
+import { FaceImage } from '../../components/FaceImage';
+import { BingoCard } from '../../components/BingoCard';
 
 export function LivePlay({ team, pub, round, live, now, paused }: { team: TeamState; pub: PublicState; round: NonNullable<PublicState['round']>; live: Live; now: number; paused: boolean }) {
   const q = pub.live;
@@ -22,7 +22,7 @@ export function LivePlay({ team, pub, round, live, now, paused }: { team: TeamSt
 
   if (me.eliminated) {
     return (
-      <section data-level={round.level} className="panel pop border-bad p-6 text-center" aria-label="Eliminated">
+      <section data-level={skinOf(round.level)} className="panel pop border-bad p-6 text-center" aria-label="Eliminated">
         <p className="break text-6xl" aria-hidden="true">💔</p>
         <h2 className="text-2xl font-black">You are out of the Showdown</h2>
         <p className="mt-2 text-muted">Your points stay on the board. Watch the big screen for the finish!</p>
@@ -33,12 +33,13 @@ export function LivePlay({ team, pub, round, live, now, paused }: { team: TeamSt
   if (!q) return <Spinner label="Waiting for the next question" />;
 
   return (
-    <section data-level={round.level} className="flex flex-col gap-3" aria-label="Live question">
+    <section data-level={skinOf(round.level)} className="flex flex-col gap-3" aria-label="Live question">
       <div className="panel px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-[var(--accent)]"><Emblem level={round.level} />Level {round.level} · {NAME[round.level] ?? 'Live'}</p>
-            <p className="font-bold">Question {q.index + 1} of {q.total}</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-[var(--accent)]"><Emblem level={round.level} />Level {round.level} · {LEVELS[round.level]?.name ?? 'Live'}</p>
+            {round.kind === 'bingo' && me.bingo && <p className="text-xs text-muted">Card: {me.bingo.marked.length}/16 marked · {me.bingo.lines} line{me.bingo.lines === 1 ? '' : 's'}</p>}
+            <p className="font-bold">{round.kind === 'bingo' ? 'Call' : 'Question'} {q.index + 1} of {q.total}</p>
           </div>
           <div className="flex flex-col items-end gap-1">
             {hearts}
@@ -88,6 +89,8 @@ function Open({ q, team, live, now }: { q: LivePublic; team: TeamState; live: Li
   const [result, setResult] = useState<AnswerResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const chosen = useRef('');
+  const bingo = me.bingo;
+  const label = (id: string) => (bingo ? bingo.tiles.find((t) => t.id === id)?.text : q.options.find((o) => o.id === id)?.text) ?? id;
   const locked = me.locked || result?.outcome === 'locked';
   const closed = (q.phaseEndsAt !== null && q.phaseEndsAt <= now) || result?.outcome === 'late';
 
@@ -113,9 +116,10 @@ function Open({ q, team, live, now }: { q: LivePublic; team: TeamState; live: Li
   return (
     <>
       <article key={q.index} className="panel glow pop p-4">
+        {q.image && <div className="photo-frame mb-3"><FaceImage src={q.image} className="aspect-square max-h-[40vh] w-full" /></div>}
         <h2 className="text-lg font-black text-[var(--accent)]">{q.title}</h2>
-        <p className="prompt mt-2 text-base">{q.prompt}</p>
-        <p className="mt-3 text-xs text-muted">Worth {q.points} points + speed bonus · one answer, final</p>
+        <p className={`mt-2 text-base ${bingo || q.image ? 'font-semibold leading-snug' : 'prompt'}`}>{bingo && <span aria-hidden="true">📣 </span>}{q.prompt}</p>
+        <p className="mt-3 text-xs text-muted">Worth {q.points} points + speed bonus · {bingo ? 'tap the tile that matches, then lock in' : 'one answer, final'}</p>
       </article>
       {error && <ErrorBanner>{error}</ErrorBanner>}
       {result && result.outcome !== 'locked' && (
@@ -124,15 +128,17 @@ function Open({ q, team, live, now }: { q: LivePublic; team: TeamState; live: Li
       {locked ? (
         <div role="status" aria-live="polite" className="panel pop border-neon p-5 text-center">
           <p className="lock-in text-5xl" aria-hidden="true">🔒</p>
-          <p className="text-xl font-black">Answer locked in{chosen.current ? `: ${q.options.find((o) => o.id === chosen.current)?.text ?? chosen.current}` : ''}</p>
+          <p className="text-xl font-black">Answer locked in{chosen.current ? `: ${label(chosen.current)}` : ''}</p>
           <p className="text-muted">{result?.message.includes('DOUBLE') ? '🔥 Double Down is on! ' : ''}Results appear when the question closes.</p>
           <p className="mt-2 text-sm text-muted">{q.answered} of {q.eligible} teams locked in</p>
         </div>
       ) : closed ? (
         <div role="status" className="panel p-5 text-center"><p className="text-xl font-black">⏱ Time is up</p><p className="text-muted">Waiting for the reveal…</p></div>
       ) : (
-        <form onSubmit={(e) => { e.preventDefault(); if (q.options.length === 0) void send(); }} className="flex flex-col gap-3">
-          {q.options.length > 0 ? (
+        <form onSubmit={(e) => { e.preventDefault(); if (q.options.length === 0 && !bingo) void send(); }} className="flex flex-col gap-3">
+          {bingo ? (
+            <BingoCard bingo={bingo} selected={value} onSelect={setValue} />
+          ) : q.options.length > 0 ? (
             <OptionButtons options={q.options} value={value} onChange={setValue} />
           ) : (
             <div>
@@ -149,8 +155,8 @@ function Open({ q, team, live, now }: { q: LivePublic; team: TeamState; live: Li
               </span>
             </label>
           )}
-          <button type={q.options.length > 0 ? 'button' : 'submit'} onClick={q.options.length > 0 ? () => void send() : undefined} className="btn btn-primary !min-h-14 text-lg" disabled={busy || !value.trim()}>
-            {busy ? 'Locking in…' : double ? '🔥 Lock in with Double Down' : 'Lock in answer'}
+          <button type={q.options.length > 0 || bingo ? 'button' : 'submit'} onClick={q.options.length > 0 || bingo ? () => void send() : undefined} className="btn btn-primary !min-h-14 text-lg" disabled={busy || !value.trim()}>
+            {busy ? 'Locking in…' : double ? '🔥 Lock in with Double Down' : bingo && value ? `Lock in ${label(value)}` : 'Lock in answer'}
           </button>
         </form>
       )}
@@ -162,6 +168,8 @@ function Reveal({ q, team }: { q: LivePublic; team: TeamState }) {
   const me = team.live!;
   const r = q.reveal;
   const res = me.result;
+  const bingo = me.bingo;
+  const calling = bingo && r && !r.voided ? (q.bingo?.called.at(-1) ?? null) : null;
   const tone = !res ? '' : res.outcome === 'correct' ? 'border-ok bg-[#052e16]' : res.outcome === 'incorrect' ? 'border-bad bg-[#3b0a1c]' : 'border-line bg-panel2';
   return (
     <>
@@ -185,14 +193,29 @@ function Reveal({ q, team }: { q: LivePublic; team: TeamState }) {
           <p className="text-lg font-bold">Results…</p>
         )}
       </div>
+      {q.image && r && !r.voided && (
+        <div className="photo-frame pop mx-auto w-full max-w-[16rem]">
+          <FaceImage src={q.image} className="aspect-square w-full" />
+          <p className="name-tag">{r.correctText}</p>
+        </div>
+      )}
+      {bingo && (
+        <div className="panel p-3">
+          <BingoCard bingo={bingo} calling={calling} />
+          {res?.breakdown.some((b) => b.label.startsWith('BINGO')) && <p className="res-correct mt-2 rounded-lg border-2 border-[var(--accent2)] bg-panel2 py-2 text-center text-xl font-black text-[var(--accent2)]">🎉 BINGO! Line completed</p>}
+          {res?.breakdown.some((b) => b.label.startsWith('BLACKOUT')) && <p className="res-correct mt-2 rounded-lg border-2 border-[var(--accent2)] bg-panel2 py-2 text-center text-xl font-black text-[var(--accent2)]">🏆 BLACKOUT! Full card</p>}
+        </div>
+      )}
       {r && (
         <div className="panel p-4">
           <p className="text-sm text-muted">Correct answer</p>
           <p className="text-xl font-black text-ok">{r.correctText}</p>
+          {r.fact && <p className="mt-2 text-sm"><span aria-hidden="true">💡 </span>{r.fact}</p>}
           <p className="mt-2 text-sm text-muted">{r.correctCount} of {r.answered} answering teams got it right</p>
           {r.fastest && <p className="mt-2">⚡ Fastest: <strong>{r.fastest.name}</strong></p>}
           {r.steal && <p className="mt-1">🦹 <strong>{r.steal.thief}</strong> stole {r.steal.points} from <strong>{r.steal.victim}</strong>!</p>}
           {r.eliminated.length > 0 && <p className="mt-1 text-bad">💔 Eliminated: {r.eliminated.join(', ')}</p>}
+          {r.bingos.length > 0 && <p className="mt-1">🎉 BINGO: <strong>{r.bingos.map((b) => b.name).join(', ')}</strong></p>}
         </div>
       )}
       {me.streak >= 2 && <p className="text-center font-bold text-warn"><span className="beat" aria-hidden="true">🔥</span> {me.streak} in a row!</p>}

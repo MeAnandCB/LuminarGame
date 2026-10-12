@@ -289,4 +289,60 @@ CREATE TABLE live_question_log (
 );
 `,
   },
+  {
+    id: 3,
+    name: 'faces_and_bingo',
+    foreignKeysOff: true,
+    sql: `
+-- rounds: the two new game kinds
+CREATE TABLE rounds_new (
+  id INTEGER PRIMARY KEY,
+  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  level INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('quiz','puzzle','lightning','showdown','faces','bingo')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','paused','ended')),
+  config TEXT NOT NULL,
+  instructions TEXT NOT NULL,
+  started_at INTEGER,
+  deadline_at INTEGER,
+  remaining_ms INTEGER,
+  heartbeat_at INTEGER,
+  ended_at INTEGER,
+  answers_revealed INTEGER NOT NULL DEFAULT 0,
+  live_index INTEGER NOT NULL DEFAULT 0,
+  live_phase TEXT CHECK (live_phase IN ('open','reveal')),
+  live_clock_start INTEGER NOT NULL DEFAULT 0,
+  live_q_start INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (event_id, level)
+);
+INSERT INTO rounds_new SELECT * FROM rounds;
+DROP TABLE rounds;
+ALTER TABLE rounds_new RENAME TO rounds;
+
+-- score_ledger: bingo bonuses
+CREATE TABLE score_ledger_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  round_id INTEGER REFERENCES rounds(id) ON DELETE CASCADE,
+  challenge_id INTEGER REFERENCES challenges(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('answer','speed_bonus','time_bonus','completion_bonus','hint_penalty','wrong_penalty','admin_adjust','fastest_bonus','streak_bonus','double_down','steal','stolen','survivor_bonus','bingo_line','bingo_blackout')),
+  points INTEGER NOT NULL,
+  reason TEXT,
+  actor TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  at_ms INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+INSERT INTO score_ledger_new SELECT * FROM score_ledger;
+DROP TABLE score_ledger;
+ALTER TABLE score_ledger_new RENAME TO score_ledger;
+CREATE INDEX idx_ledger_team ON score_ledger(event_id, team_id);
+CREATE INDEX idx_ledger_round ON score_ledger(round_id, team_id);
+
+-- challenges: optional picture (Tech Faces)
+ALTER TABLE challenges ADD COLUMN image TEXT;
+`,
+  },
 ];

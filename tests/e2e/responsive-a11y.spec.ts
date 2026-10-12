@@ -55,21 +55,24 @@ test('layouts have no horizontal overflow and pass automated accessibility check
   await axe(dp, 'display registration');
 
   await api.post('/registration/confirm');
+  for (const level of [1, 2, 4]) await api.patch(`/round/${level}/config`, { questionSec: 120 }); // keep questions open while the checks run
   await api.post('/round/prepare');
   await api.post('/round/start');
 
+  // ---- Level 1 (Tech Faces, live) with 20 teams ----------------------------------------------
   for (const vp of VIEWPORTS) {
     const dctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height } });
     const d = await dctx.newPage();
     await d.goto('/display');
     await expect(d.getByRole('timer')).toBeVisible();
+    await expect(d.getByRole('list', { name: 'Answer options' }).getByRole('listitem')).toHaveCount(4);
     await expect(d.locator('tbody tr')).toHaveCount(20);
     await noHorizontalOverflow(d);
     if (vp.name === 'projector-1920') {
       // every one of the 20 rows must fit inside the 16:9 viewport without page scrolling
       const h = await d.evaluate(() => ({ sh: document.documentElement.scrollHeight, ch: document.documentElement.clientHeight }));
       expect(h.sh, 'projector page scrolls vertically').toBeLessThanOrEqual(h.ch + 2);
-      await axe(d, 'display running');
+      await axe(d, 'display faces question');
     }
     await dctx.close();
   }
@@ -81,12 +84,12 @@ test('layouts have no horizontal overflow and pass automated accessibility check
     expect(resp.status()).toBe(201);
     const p = await ctx.newPage();
     await p.goto('/');
-    await expect(p.getByText('Question 1 of 12')).toBeVisible();
+    await expect(p.getByText('Question 1 of 10')).toBeVisible();
     await noHorizontalOverflow(p);
     // choice buttons are touch friendly (>= 44px tall)
     const box = await p.getByRole('radio').first().boundingBox();
     expect(box!.height).toBeGreaterThanOrEqual(44);
-    if (vp.name === 'phone-320') await axe(p, 'team play');
+    if (vp.name === 'phone-320') await axe(p, 'team faces question');
     await ctx.close();
   }
 
@@ -102,8 +105,84 @@ test('layouts have no horizontal overflow and pass automated accessibility check
   const anim = await kb.evaluate(() => getComputedStyle(document.querySelector('article')!).animationName);
   expect(anim).toBe('none');
 
-  // ---- Level 2 (live) with 20 teams: projector, phone and keyboard ---------------------------
-  await api.patch('/round/2/config', { questionSec: 120 }); // keep the question open while the checks run
+  // reveal of the faces question on the projector still fits the screen
+  await api.post('/round/live/advance'); // close the question -> reveal
+  const fr = await (await browser.newContext({ viewport: { width: 1920, height: 1080 } })).newPage();
+  await fr.goto('/display');
+  await expect(fr.getByText('Reveal')).toBeVisible();
+  const hf = await fr.evaluate(() => ({ sh: document.documentElement.scrollHeight, ch: document.documentElement.clientHeight }));
+  expect(hf.sh, 'faces reveal view scrolls vertically').toBeLessThanOrEqual(hf.ch + 2);
+  await axe(fr, 'display faces reveal');
+  await fr.context().close();
+
+  // ---- Level 2 (Tech Bingo, live) with 20 teams: projector, phone and keyboard -----------------
+  await api.post('/round/end');
+  await api.post('/round/prepare');
+  await api.post('/round/start');
+  await expect(kb.getByText(/Tech Bingo/).first()).toBeVisible();
+  for (const vp of VIEWPORTS) {
+    const dctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height } });
+    const d = await dctx.newPage();
+    await d.goto('/display');
+    await expect(d.getByRole('list', { name: /Bingo board/ }).getByRole('listitem')).toHaveCount(16);
+    await expect(d.locator('tbody tr')).toHaveCount(20);
+    await noHorizontalOverflow(d);
+    if (vp.name === 'projector-1920') {
+      const h = await d.evaluate(() => ({ sh: document.documentElement.scrollHeight, ch: document.documentElement.clientHeight }));
+      expect(h.sh, 'bingo projector view scrolls vertically').toBeLessThanOrEqual(h.ch + 2);
+      await axe(d, 'display bingo question');
+    }
+    await dctx.close();
+  }
+  const card = kb.getByRole('group', { name: 'Your bingo card' });
+  await expect(card.getByRole('button')).toHaveCount(16);
+  await noHorizontalOverflow(kb);
+  const cell = await card.getByRole('button').first().boundingBox();
+  expect(cell!.height).toBeGreaterThanOrEqual(44);
+  expect(cell!.width).toBeGreaterThanOrEqual(44);
+  // keyboard: focus a tile, select it with Space, lock in with Enter on the button
+  await card.getByRole('button').nth(5).focus();
+  await kb.keyboard.press('Space');
+  await expect(card.getByRole('button').nth(5)).toHaveAttribute('aria-pressed', 'true');
+  await kb.getByRole('button', { name: /^Lock in / }).focus();
+  await kb.keyboard.press('Enter');
+  await expect(kb.getByText(/Answer locked in/)).toBeVisible();
+  await axe(kb, 'team bingo locked');
+  await api.post('/round/live/advance'); // close the call -> reveal
+  await expect(kb.getByText(/The tile|Correct answer/).first()).toBeVisible();
+  await noHorizontalOverflow(kb);
+  const bctx = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const rv0 = await bctx.newPage();
+  await rv0.goto('/display');
+  await expect(rv0.getByText('The tile was')).toBeVisible();
+  const hb = await rv0.evaluate(() => ({ sh: document.documentElement.scrollHeight, ch: document.documentElement.clientHeight }));
+  expect(hb.sh, 'bingo reveal view scrolls vertically').toBeLessThanOrEqual(hb.ch + 2);
+  await axe(rv0, 'display bingo reveal');
+  await bctx.close();
+  // (a team may hold at most 6 devices, so the later phone checks use one extra device each)
+  for (const vp of VIEWPORTS.slice(0, 1)) {
+    const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, isMobile: true, hasTouch: true });
+    const resp = await ctx.request.post('/api/team/link', { data: { pin, code: (await (await first.page.request.get('/api/team/me')).json()).team.code } });
+    expect(resp.status()).toBe(201);
+    const p = await ctx.newPage();
+    await p.goto('/');
+    await expect(p.getByText(/Call \d+ of 16/)).toBeVisible();
+    await noHorizontalOverflow(p);
+    if (vp.name === 'phone-320') await axe(p, 'team bingo');
+    await ctx.close();
+  }
+
+  // ---- Level 3 (Quick Brain, self-paced) ---------------------------------------------------------
+  await api.post('/round/end');
+  await api.post('/round/prepare');
+  await api.post('/round/start');
+  await expect(kb.getByText('Question 1 of 12')).toBeVisible();
+  await noHorizontalOverflow(kb);
+  const qbox = await kb.getByRole('radio').first().boundingBox();
+  expect(qbox!.height).toBeGreaterThanOrEqual(44);
+  await axe(kb, 'team quick brain');
+
+  // ---- Level 4 (Reel Rush, live) with 20 teams: projector, phone and keyboard -------------------
   await api.post('/round/end');
   await api.post('/round/prepare');
   await api.post('/round/start');
@@ -145,8 +224,8 @@ test('layouts have no horizontal overflow and pass automated accessibility check
   await axe(rv, 'display live reveal');
   await dctx2.close();
 
-  // phones at small sizes in the live game
-  for (const vp of VIEWPORTS.slice(0, 2)) {
+  // phone at the smallest size in the live game
+  for (const vp of VIEWPORTS.slice(0, 1)) {
     const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, isMobile: true, hasTouch: true });
     const resp = await ctx.request.post('/api/team/link', { data: { pin, code: (await (await first.page.request.get('/api/team/me')).json()).team.code } });
     expect(resp.status()).toBe(201);

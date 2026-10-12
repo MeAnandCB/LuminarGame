@@ -3,7 +3,7 @@ import { C2S } from '../../shared/contract.js';
 import type { AnswerResult } from '../../shared/types.js';
 import { SEED_ROUNDS } from '../../server/content/seed.js';
 import { MIGRATIONS } from '../../server/db/migrations.js';
-import { TeamClient, adminClient, adminState, boot, connectSocket, correct, setupEvent, sleep, waitFor, type Booted } from './helpers.js';
+import { TeamClient, adminClient, adminState, boot, connectSocket, correct, setupEvent, skipIntroRounds, sleep, waitFor, type Booted } from './helpers.js';
 
 let b: Booted;
 afterEach(async () => {
@@ -21,12 +21,13 @@ describe('real-time sync', () => {
     const display = await connectSocket(b, { role: 'display' });
     const phone = await connectSocket(b, { role: 'team' }, teams[0]!.cookieHeader);
     await admin.post('/api/admin/registration/confirm');
+    await skipIntroRounds(admin);
     await admin.post('/api/admin/round/prepare');
     await admin.post('/api/admin/round/start');
     await waitFor(() => display.publicStates.at(-1)?.event?.state === 'ROUND_RUNNING');
     expect(display.events.some((e) => e.name === 'announce')).toBe(true);
 
-    const ack = await emitAck<AnswerResult>(phone, C2S.submitAnswer, { requestId: 'sock-req-0001', answer: correct(1, 0) });
+    const ack = await emitAck<AnswerResult>(phone, C2S.submitAnswer, { requestId: 'sock-req-0001', answer: correct(3, 0) });
     expect(ack.ok).toBe(true);
     expect(ack.result).toMatchObject({ outcome: 'correct' });
     const top = await waitFor(() => display.publicStates.at(-1)?.leaderboard.find((r) => r.name === 'Team 1' && r.total > 0));
@@ -43,14 +44,15 @@ describe('real-time sync', () => {
     b = await boot();
     const { admin, teams } = await setupEvent(b, { teams: 2 });
     await admin.post('/api/admin/registration/confirm');
+    await skipIntroRounds(admin);
     await admin.post('/api/admin/round/prepare');
     await admin.post('/api/admin/round/start');
     const phone = await connectSocket(b, { role: 'team' }, teams[0]!.cookieHeader);
     expect((await emitAck(phone, C2S.submitAnswer, { answer: 'a' })).error?.code).toBe('INVALID_INPUT');
     expect((await emitAck(phone, C2S.submitAnswer, 'garbage')).error?.code).toBe('INVALID_INPUT');
     expect((await emitAck(phone, C2S.submitAnswer, { requestId: 'x'.repeat(200), answer: 'a' })).error?.code).toBe('INVALID_INPUT');
-    const first = await emitAck<AnswerResult>(phone, C2S.submitAnswer, { requestId: 'dup-request-01', answer: correct(1, 0), teamId: teams[1]!.state.team.id });
-    const second = await emitAck<AnswerResult>(phone, C2S.submitAnswer, { requestId: 'dup-request-01', answer: correct(1, 0) });
+    const first = await emitAck<AnswerResult>(phone, C2S.submitAnswer, { requestId: 'dup-request-01', answer: correct(3, 0), teamId: teams[1]!.state.team.id });
+    const second = await emitAck<AnswerResult>(phone, C2S.submitAnswer, { requestId: 'dup-request-01', answer: correct(3, 0) });
     expect(first.result!.duplicate).toBeUndefined();
     expect(second.result).toMatchObject({ duplicate: true, outcome: 'correct' });
     expect((await teams[1]!.me()).score.total).toBe(0);
@@ -62,6 +64,7 @@ describe('real-time sync', () => {
     b = await boot({ rateLimits: { answer: { max: 3, windowMs: 60_000 } } });
     const { admin, teams } = await setupEvent(b, { teams: 1 });
     await admin.post('/api/admin/registration/confirm');
+    await skipIntroRounds(admin);
     await admin.post('/api/admin/round/prepare');
     await admin.post('/api/admin/round/start');
     const phone = await connectSocket(b, { role: 'team' }, teams[0]!.cookieHeader);
@@ -85,9 +88,10 @@ describe('real-time sync', () => {
     expect(adm.adminStates.at(-1)!.counts.connected).toBe(0);
     // comes back later with a brand-new socket and the same cookie
     await admin.post('/api/admin/registration/confirm');
+    await skipIntroRounds(admin);
     await admin.post('/api/admin/round/prepare');
     await admin.post('/api/admin/round/start');
-    await teams[0]!.answer(correct(1, 0));
+    await teams[0]!.answer(correct(3, 0));
     const p1b = await connectSocket(b, { role: 'team' }, teams[0]!.cookieHeader);
     const restored = await waitFor(() => p1b.teamStates.at(-1));
     expect(restored.progress!.position).toBe(1);
@@ -128,10 +132,11 @@ describe('real-time sync', () => {
     b = await boot();
     const { admin, teams } = await setupEvent(b, { teams: 20 });
     await admin.post('/api/admin/registration/confirm');
+    await skipIntroRounds(admin);
     await admin.post('/api/admin/round/prepare');
     await admin.post('/api/admin/round/start');
     const socks = await Promise.all(teams.map((t) => connectSocket(b, { role: 'team' }, t.cookieHeader)));
-    const acks = await Promise.all(socks.map((s, i) => emitAck<AnswerResult>(s, C2S.submitAnswer, { requestId: `burst-${i}-aaaaaaaa`, answer: correct(1, 0) })));
+    const acks = await Promise.all(socks.map((s, i) => emitAck<AnswerResult>(s, C2S.submitAnswer, { requestId: `burst-${i}-aaaaaaaa`, answer: correct(3, 0) })));
     expect(acks.every((a) => a.ok && a.result!.outcome === 'correct')).toBe(true);
     const s = await adminState(admin);
     expect(s.leaderboard).toHaveLength(20);
@@ -149,11 +154,12 @@ describe('persistence and recovery', () => {
     const clock = b.clock;
     const { admin, teams, pin } = await setupEvent(b, { teams: 2 });
     await admin.post('/api/admin/registration/confirm');
-    await admin.patch('/api/admin/round/1/config', { durationSec: 300 });
+    await admin.patch('/api/admin/round/3/config', { durationSec: 300 });
+    await skipIntroRounds(admin);
     await admin.post('/api/admin/round/prepare');
     await admin.post('/api/admin/round/start');
-    await teams[0]!.answer(correct(1, 0));
-    await teams[0]!.answer(correct(1, 1));
+    await teams[0]!.answer(correct(3, 0));
+    await teams[0]!.answer(correct(3, 1));
     clock.advance(60_000);
     b.h.realtime.tick(); // heartbeat
     const cookies = new Map(teams[0]!.cookies);
@@ -165,7 +171,7 @@ describe('persistence and recovery', () => {
     const s = await adminState(admin2);
     expect(s.event.pin).toBe(pin);
     expect(s.event.state).toBe('ROUND_PAUSED');
-    expect(s.rounds[0]!.remainingMs).toBe(240_000);
+    expect(s.rounds[2]!.remainingMs).toBe(240_000);
     expect(s.leaderboard.find((r) => r.name === 'Team 1')!.total).toBe(220);
     const t = new TeamClient(b.base);
     t.cookies = cookies;
@@ -173,9 +179,9 @@ describe('persistence and recovery', () => {
     expect(me.progress!.position).toBe(2);
     expect(me.score.total).toBe(220);
     // blocked while paused, then host resumes and play continues
-    expect((await t.answer(correct(1, 2))).json.outcome).toBe('rejected');
+    expect((await t.answer(correct(3, 2))).json.outcome).toBe('rejected');
     await admin2.post('/api/admin/round/resume');
-    expect((await t.answer(correct(1, 2))).json.outcome).toBe('correct');
+    expect((await t.answer(correct(3, 2))).json.outcome).toBe('correct');
     expect((await t.me()).score.total).toBe(320); // 60 s of play since unlock: no speed bonus left
     expect((await adminState(admin2)).audit.some((a) => a.action === 'recovery.pause')).toBe(true);
   });
@@ -184,9 +190,10 @@ describe('persistence and recovery', () => {
     b = await boot();
     const { admin, teams } = await setupEvent(b, { teams: 2 });
     await admin.post('/api/admin/registration/confirm');
+    await skipIntroRounds(admin);
     await admin.post('/api/admin/round/prepare');
     await admin.post('/api/admin/round/start');
-    await teams[1]!.answer(correct(1, 0));
+    await teams[1]!.answer(correct(3, 0));
     await admin.post('/api/admin/round/end');
     await admin.post('/api/admin/event/complete');
     const before = (await adminState(admin)).leaderboard;
@@ -223,6 +230,6 @@ describe('persistence and recovery', () => {
     expect(me.award).toBe('Champion');
     const r = await teams[0]!.answer('a');
     expect(r.status).toBe(409);
-    expect(SEED_ROUNDS.length).toBe(3);
+    expect(SEED_ROUNDS.length).toBe(5);
   });
 });

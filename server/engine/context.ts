@@ -66,6 +66,7 @@ export interface ChallengeRow {
   answers: string;
   points: number;
   hint: string | null;
+  image: string | null;
 }
 
 export interface TeamRow {

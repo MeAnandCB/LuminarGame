@@ -20,11 +20,13 @@ export type TeamStatus = 'pending' | 'approved' | 'rejected' | 'removed';
 export type AnswerOutcome = 'correct' | 'incorrect' | 'late' | 'rejected' | 'locked' | 'skipped';
 
 /**
- * quiz       - Level 1 "Quick Brain": self-paced, one answer per question.
- * lightning  - Level 2 "Reel Rush": host-paced live questions, speed + streak + Double Down.
- * showdown   - Level 3 "Final Showdown": finalists, lives, fastest-finger steals, last team standing.
+ * faces      - Level 1 "Tech Faces": live, host-paced "who is this?" photo questions.
+ * bingo      - Level 2 "Tech Bingo": live, host-called clues; each team marks its own shuffled 4x4 card.
+ * quiz       - Level 3 "Quick Brain": self-paced, one answer per question.
+ * lightning  - Level 4 "Reel Rush": host-paced live questions, speed + streak + Double Down.
+ * showdown   - Level 5 "Final Showdown": finalists, lives, fastest-finger steals, last team standing.
  */
-export type RoundKind = 'quiz' | 'lightning' | 'showdown';
+export type RoundKind = 'faces' | 'bingo' | 'quiz' | 'lightning' | 'showdown';
 
 export interface RoundConfig {
   /** Quiz: whole-round timer. Live games: derived from the question/reveal timings. */
@@ -57,6 +59,10 @@ export interface RoundConfig {
   stealPoints: number;
   /** Showdown: bonus for each team still alive when the round ends. */
   survivorBonus: number;
+  /** Bingo: bonus for every newly completed row, column or diagonal. */
+  lineBonus: number;
+  /** Bingo: bonus for marking the whole card. */
+  blackoutBonus: number;
 }
 
 export interface EventSettings {
@@ -118,6 +124,8 @@ export interface RevealedItem {
 export interface LiveOption {
   id: string;
   text: string;
+  /** Bingo tiles carry an emoji. */
+  icon?: string;
   /** Reveal phase only. */
   count?: number;
   correct?: boolean;
@@ -132,6 +140,19 @@ export interface LiveReveal {
   steal: { thief: string; victim: string; points: number } | null;
   eliminated: string[];
   voided: boolean;
+  /** Faces: a short "did you know" about the answer. */
+  fact: string | null;
+  /** Bingo: teams that completed a new line (or the whole card) on this call. */
+  bingos: { name: string; lines: number; blackout: boolean }[];
+}
+
+/** Bingo master board shown on the projector: which tiles have been called so far. */
+export interface BingoPublic {
+  tiles: { id: string; text: string; icon: string }[];
+  /** Tile ids already called and resolved, oldest first. */
+  called: string[];
+  /** Number of teams holding at least one completed line. */
+  teamsWithLine: number;
 }
 
 /** What the projector (and phones) may know about the live question right now. */
@@ -142,8 +163,11 @@ export interface LivePublic {
   kind: ChallengeKind;
   title: string;
   prompt: string;
+  /** Faces: URL (without extension) of the picture to identify. */
+  image: string | null;
   points: number;
   options: LiveOption[];
+  bingo: BingoPublic | null;
   answered: number;
   eligible: number;
   /** Server epoch ms when the phase ends; null while paused. */
@@ -197,6 +221,19 @@ export interface TeamHistoryItem {
   yourAnswer: string;
 }
 
+export interface TeamBingo {
+  /** Tile ids in this team's card order (row by row, 4 per row). */
+  layout: string[];
+  tiles: { id: string; text: string; icon: string }[];
+  /** Correctly marked tile ids. */
+  marked: string[];
+  /** Called but not marked by this team. */
+  missed: string[];
+  /** Card cell indexes that belong to a completed line. */
+  lineCells: number[];
+  lines: number;
+}
+
 export interface TeamLive {
   /** The team already locked in an answer for the open question. */
   locked: boolean;
@@ -205,6 +242,7 @@ export interface TeamLive {
   streak: number;
   lives: number | null;
   eliminated: boolean;
+  bingo: TeamBingo | null;
   /** Reveal phase: what happened to this team on the question. */
   result: { outcome: 'correct' | 'incorrect' | 'none' | 'voided'; points: number; breakdown: { label: string; points: number }[] } | null;
 }
@@ -238,6 +276,7 @@ export interface AdminChallenge {
   answers: string[];
   points: number;
   hint: string | null;
+  image: string | null;
 }
 
 export interface AdminRound {

@@ -73,14 +73,32 @@ export async function playLiveRound(admin: AdminApi, pages: Page[], level: numbe
   throw new Error('live round did not finish');
 }
 
+/** Level 3 (Quick Brain) is the self-paced quiz. */
 export async function solveQuiz(page: Page, from: number) {
-  for (let i = from; i < stageCount(1); i++) {
-    const r = await apiAnswer(page, answerFor(1, i));
+  for (let i = from; i < stageCount(3); i++) {
+    const r = await apiAnswer(page, answerFor(3, i));
     expect(r.outcome).toBe('correct');
   }
 }
 
+/** Plays Tech Faces and Tech Bingo with nobody answering so the next round to prepare is Quick Brain. */
+export async function skipIntroRounds(admin: AdminApi) {
+  for (let i = 0; i < 2; i++) {
+    await admin.post('/round/prepare');
+    await admin.post('/round/start');
+    await admin.post('/round/end');
+  }
+}
+
 export async function noHorizontalOverflow(page: Page) {
-  const o = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth }));
-  expect(o.sw, `scrollWidth ${o.sw} > clientWidth ${o.cw}`).toBeLessThanOrEqual(o.cw);
+  const o = await page.evaluate(() => {
+    const cw = document.documentElement.clientWidth;
+    // name the elements that stick out (decorative fixed backdrops cannot scroll the page, so they are ignored)
+    const wide = [...document.querySelectorAll('body *')]
+      .filter((el) => el.getBoundingClientRect().right > cw + 1 && !el.closest('.bd, .intro, .bd-confetti'))
+      .slice(0, 5)
+      .map((el) => `${el.tagName.toLowerCase()}.${String(el.className).slice(0, 50)}`);
+    return { sw: document.documentElement.scrollWidth, cw, wide };
+  });
+  expect(o.sw, `scrollWidth ${o.sw} > clientWidth ${o.cw}; wide elements: ${o.wide.join(' | ')}`).toBeLessThanOrEqual(o.cw);
 }

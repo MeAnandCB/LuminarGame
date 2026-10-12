@@ -1,5 +1,5 @@
 /**
- * Live, host-paced games: Level 2 "Reel Rush" (lightning) and Level 3 "Final Showdown" (showdown).
+ * Live, host-paced games: Tech Faces (faces), Tech Bingo (bingo), Reel Rush (lightning) and Final Showdown (showdown).
  *
  * Every team sees the same question at the same time. A question goes through two phases:
  *   open   (config.questionSec)  answers are locked in but NOT scored yet
@@ -9,12 +9,13 @@
  * and resolves questions inside one transaction. Scoring rules live in game/liveRules.ts (pure, unit tested).
  */
 import { checkAnswer } from '../game/normalize.js';
-import { resolveLiveQuestion, type LiveTeamInput } from '../game/liveRules.js';
+import { bingoLayout, cellsOfLines, completedLines, BINGO_CELLS } from '../game/bingo.js';
+import { resolveLiveQuestion, type Award, type LiveTeamInput } from '../game/liveRules.js';
 import { isLive } from '../game/scoring.js';
 import { elapsedClock } from '../game/timer.js';
 import { AppError, type ChallengeRow, type Ctx, type EventRow, type RoundRow, type TeamRow } from '../engine/context.js';
 import { endRound } from '../engine/events.js';
-import type { AnswerResult, LiveOption, LivePublic, LiveReveal, RoundConfig, TeamLive } from '../../shared/types.js';
+import type { AnswerResult, BingoPublic, LiveOption, LivePublic, LiveReveal, RoundConfig, TeamBingo, TeamLive } from '../../shared/types.js';
 import { award, eligibleForRound, result, type SubmitInput } from './shared.js';
 
 interface LiveTeamRow {
@@ -29,6 +30,39 @@ interface LiveTeamRow {
 const phaseMs = (cfg: RoundConfig, phase: 'open' | 'reveal') => (phase === 'open' ? cfg.questionSec : cfg.revealSec) * 1000;
 const parse = <T>(s: string | null): T | null => (s ? (JSON.parse(s) as T) : null);
 
+// ---- bingo helpers ---------------------------------------------------------------
+
+type Tile = { id: string; text: string; icon: string };
+
+function bingoTiles(items: ChallengeRow[]): Tile[] {
+  const raw = parse<Tile[]>(items[0]?.options ?? null) ?? [];
+  return raw.map((t) => ({ id: t.id, text: t.text, icon: t.icon ?? '' }));
+}
+
+/** Tile ids of the calls that have been resolved (not voided), in call order. */
+function calledTiles(ctx: Ctx, round: RoundRow): string[] {
+  return ctx.db
+    .all<{ answers: string }>("SELECT c.answers FROM challenges c JOIN live_question_log l ON l.challenge_id = c.id AND l.round_id = c.round_id AND l.status = 'resolved' WHERE c.round_id = ? ORDER BY c.position", round.id)
+    .map((r) => (JSON.parse(r.answers) as string[])[0]!);
+}
+
+/** Tiles each team has correctly marked on resolved calls. Open (unresolved) answers are never included. */
+function markedByTeam(ctx: Ctx, round: RoundRow): Map<number, Set<string>> {
+  const out = new Map<number, Set<string>>();
+  const rows = ctx.db.all<{ team_id: number; answers: string }>(
+    "SELECT s.team_id, c.answers FROM answer_submissions s JOIN challenges c ON c.id = s.challenge_id JOIN live_question_log l ON l.challenge_id = c.id AND l.round_id = s.round_id AND l.status = 'resolved' WHERE s.round_id = ? AND s.outcome = 'correct'",
+    round.id,
+  );
+  for (const r of rows) {
+    const set = out.get(r.team_id) ?? new Set<string>();
+    set.add((JSON.parse(r.answers) as string[])[0]!);
+    out.set(r.team_id, set);
+  }
+  return out;
+}
+
+const layoutFor = (tiles: Tile[], teamId: number, round: RoundRow) => bingoLayout(tiles.map((t) => t.id), teamId, round.id);
+
 function alive(ctx: Ctx, round: RoundRow): LiveTeamRow[] {
   return ctx.db.all<LiveTeamRow>(
     "SELECT l.* FROM live_team_state l JOIN teams t ON t.id = l.team_id WHERE l.round_id = ? AND l.eliminated = 0 AND t.status = 'approved' ORDER BY l.team_id",
@@ -40,6 +74,8 @@ export function initLive(ctx: Ctx, ev: EventRow, round: RoundRow): void {
   const cfg = ctx.roundConfig(round);
   const teams = ctx.db.all<{ id: number }>(`SELECT id FROM teams WHERE event_id = ? AND status = 'approved' ${round.kind === 'showdown' ? 'AND qualified = 1' : ''}`, ev.id);
   ctx.db.run('DELETE FROM live_team_state WHERE round_id = ?', round.id);
+  // A starting round has no history. Without this, a stale "resolved" row from an earlier run silently skips scoring for that question.
+  ctx.db.run('DELETE FROM live_question_log WHERE round_id = ?', round.id);
   for (const t of teams) ctx.db.run('INSERT INTO live_team_state (team_id, round_id, streak, lives, eliminated, double_used) VALUES (?,?,0,?,0,0)', t.id, round.id, cfg.lives > 0 ? cfg.lives : null);
   ctx.db.run("UPDATE rounds SET live_index = 0, live_phase = 'open', live_clock_start = 0, live_q_start = 0 WHERE id = ?", round.id);
 }
@@ -126,12 +162,33 @@ function resolveQuestion(ctx: Ctx, ev: EventRow, round: RoundRow, ch: ChallengeR
   });
   const res = resolveLiveQuestion({ cfg, basePoints: ch.points, questionStartClock: round.live_q_start, teams: inputs });
 
+  // Tech Bingo: mark the called tile on every team that got it right and pay out newly completed lines.
+  const bingos: { name: string; lines: number; blackout: boolean }[] = [];
+  const awards: Award[] = [...res.awards];
+  if (round.kind === 'bingo') {
+    const tiles = bingoTiles(ctx.challenges(round.id));
+    const called = (JSON.parse(ch.answers) as string[])[0]!;
+    const before = markedByTeam(ctx, round);
+    for (const t of inputs) {
+      const layout = layoutFor(tiles, t.teamId, round);
+      const had = before.get(t.teamId) ?? new Set<string>();
+      const now = new Set(had);
+      if (t.answered && t.correct) now.add(called);
+      const prevLines = new Set(completedLines(layout, had));
+      const fresh = completedLines(layout, now).filter((i) => !prevLines.has(i));
+      for (const i of fresh) awards.push({ teamId: t.teamId, kind: 'bingo_line', points: cfg.lineBonus, label: 'BINGO line!', key: `bingo:line:${t.teamId}:${round.id}:${i}` });
+      const blackout = now.size >= BINGO_CELLS && had.size < BINGO_CELLS;
+      if (blackout) awards.push({ teamId: t.teamId, kind: 'bingo_blackout', points: cfg.blackoutBonus, label: 'BLACKOUT!', key: `bingo:blackout:${t.teamId}:${round.id}` });
+      if (fresh.length > 0 || blackout) bingos.push({ name: t.name, lines: fresh.length, blackout });
+    }
+  }
+
   // Write in arrival order so the "earliest last solve" tie-break stays meaningful.
   const order = [...inputs].sort((a, b) => a.order - b.order || a.teamId - b.teamId).map((t) => t.teamId);
   for (const teamId of order) {
     let sum = 0;
-    for (const a of res.awards.filter((x) => x.teamId === teamId)) {
-      if (award(ctx, { ev, teamId, roundId: round.id, challengeId: ch.id, kind: a.kind, points: a.points, key: `live:${a.kind}:${teamId}:${ch.id}`, actor: 'system', reason: a.label })) sum += a.points;
+    for (const a of awards.filter((x) => x.teamId === teamId)) {
+      if (award(ctx, { ev, teamId, roundId: round.id, challengeId: ch.id, kind: a.kind, points: a.points, key: a.key ?? `live:${a.kind}:${teamId}:${ch.id}`, actor: 'system', reason: a.label })) sum += a.points;
     }
     const s = subs.get(teamId);
     if (s) ctx.db.run('UPDATE answer_submissions SET points = ? WHERE id = ?', sum, s.id);
@@ -144,12 +201,18 @@ function resolveQuestion(ctx: Ctx, ev: EventRow, round: RoundRow, ch: ChallengeR
     fastest: res.fastestTeamId ? { teamId: res.fastestTeamId, name: names.get(res.fastestTeamId) ?? '?', bonus: fastestAward?.points ?? 0 } : null,
     steal: res.steal ? { thief: names.get(res.steal.thiefId) ?? '?', victim: names.get(res.steal.victimId) ?? '?', points: res.steal.points } : null,
     eliminated: res.eliminated.map((id) => names.get(id) ?? '?'),
+    bingos,
   };
   ctx.db.run("INSERT INTO live_question_log (round_id, challenge_id, status, resolved_at, summary) VALUES (?,?,'resolved',?,?)", round.id, ch.id, ctx.clock.now(), JSON.stringify(summary));
 }
 
 /** Level-3 survivors collect their bonus when the round ends (called inside endRound's transaction). */
 export function onRoundEnd(ctx: Ctx, ev: EventRow, round: RoundRow): void {
+  // Ending the round while a question is still open must not throw the locked-in answers away: score it first.
+  if (isLive(round.kind) && round.live_phase === 'open') {
+    const open = ctx.challenges(round.id)[round.live_index];
+    if (open) resolveQuestion(ctx, ev, ctx.round(round.id), open);
+  }
   if (round.kind !== 'showdown') return;
   const cfg = ctx.roundConfig(round);
   if (cfg.survivorBonus <= 0) return;
@@ -288,15 +351,16 @@ export function livePublic(ctx: Ctx, ev: EventRow, round: RoundRow): LivePublic 
   const running = round.status === 'running';
   const standing = alive(ctx, round).length;
   const subs = ctx.db.all<{ normalized: string; outcome: string }>("SELECT normalized, outcome FROM answer_submissions WHERE challenge_id = ? AND outcome IN ('correct','incorrect')", ch.id);
-  const opts = parse<{ id: string; text: string }[]>(ch.options) ?? [];
+  const opts = parse<{ id: string; text: string; icon?: string }[]>(ch.options) ?? [];
+  const isBingo = round.kind === 'bingo';
 
   let reveal: LiveReveal | null = null;
-  let options: LiveOption[] = opts.map((o) => ({ id: o.id, text: o.text }));
+  let options: LiveOption[] = opts.map((o) => ({ id: o.id, text: o.text, ...(o.icon ? { icon: o.icon } : {}) }));
   if (phase === 'reveal') {
     const answers = JSON.parse(ch.answers) as string[];
     const log = ctx.db.get<{ status: string; summary: string }>('SELECT status, summary FROM live_question_log WHERE round_id = ? AND challenge_id = ?', round.id, ch.id);
-    const sum = JSON.parse(log?.summary ?? '{}') as { fastest?: LiveReveal['fastest']; steal?: LiveReveal['steal']; eliminated?: string[] };
-    options = opts.map((o) => ({ id: o.id, text: o.text, count: subs.filter((s) => s.normalized === o.id).length, correct: answers.includes(o.id) }));
+    const sum = JSON.parse(log?.summary ?? '{}') as { fastest?: LiveReveal['fastest']; steal?: LiveReveal['steal']; eliminated?: string[]; bingos?: LiveReveal['bingos'] };
+    options = opts.map((o) => ({ id: o.id, text: o.text, ...(o.icon ? { icon: o.icon } : {}), count: subs.filter((s) => s.normalized === o.id).length, correct: answers.includes(o.id) }));
     reveal = {
       correctText: opts.filter((o) => answers.includes(o.id)).map((o) => o.text).join(' / ') || answers.join(' / '),
       options,
@@ -306,7 +370,17 @@ export function livePublic(ctx: Ctx, ev: EventRow, round: RoundRow): LivePublic 
       steal: sum.steal ?? null,
       eliminated: sum.eliminated ?? [],
       voided: log?.status === 'voided',
+      fact: round.kind === 'faces' ? ch.hint : null,
+      bingos: sum.bingos ?? [],
     };
+  }
+  let bingo: BingoPublic | null = null;
+  if (isBingo) {
+    const tiles = bingoTiles(items);
+    const marked = markedByTeam(ctx, round);
+    let teamsWithLine = 0;
+    for (const [teamId, set] of marked) if (completedLines(layoutFor(tiles, teamId, round), set).length > 0) teamsWithLine++;
+    bingo = { tiles, called: calledTiles(ctx, round), teamsWithLine };
   }
   return {
     phase,
@@ -315,8 +389,10 @@ export function livePublic(ctx: Ctx, ev: EventRow, round: RoundRow): LivePublic 
     kind: ch.kind,
     title: ch.title,
     prompt: ch.prompt,
+    image: ch.image,
     points: ch.points,
-    options,
+    options: isBingo ? [] : options,
+    bingo,
     answered: subs.length,
     eligible: standing,
     phaseEndsAt: running ? now + remainingMs : null,
@@ -334,6 +410,8 @@ const KIND_LABEL: Record<string, string> = {
   wrong_penalty: 'Wrong answer',
   steal: 'Stolen points',
   stolen: 'Points stolen from you',
+  bingo_line: 'BINGO! Line completed',
+  bingo_blackout: 'BLACKOUT! Full card',
 };
 
 export function teamLive(ctx: Ctx, team: TeamRow, ev: EventRow, round: RoundRow): TeamLive | null {
@@ -356,7 +434,22 @@ export function teamLive(ctx: Ctx, team: TeamRow, ev: EventRow, round: RoundRow)
       };
     }
   }
-  return { locked, doubleAvailable: cfg.doubleDown && !st.double_used && !st.eliminated, streak: st.streak, lives: st.lives, eliminated: st.eliminated === 1, result: res };
+  return { locked, doubleAvailable: cfg.doubleDown && !st.double_used && !st.eliminated, streak: st.streak, lives: st.lives, eliminated: st.eliminated === 1, bingo: round.kind === 'bingo' ? teamBingo(ctx, team, round) : null, result: res };
+}
+
+function teamBingo(ctx: Ctx, team: TeamRow, round: RoundRow): TeamBingo {
+  const tiles = bingoTiles(ctx.challenges(round.id));
+  const layout = layoutFor(tiles, team.id, round);
+  const marked = markedByTeam(ctx, round).get(team.id) ?? new Set<string>();
+  const lines = completedLines(layout, marked);
+  return {
+    layout,
+    tiles,
+    marked: [...marked],
+    missed: calledTiles(ctx, round).filter((id) => !marked.has(id)),
+    lineCells: cellsOfLines(lines),
+    lines: lines.length,
+  };
 }
 
 export function liveCounts(ctx: Ctx, round: RoundRow): { total: number; standing: number } {

@@ -174,6 +174,18 @@ export async function setupEvent(b: Booted, opts: { teams?: number; settings?: R
   return { admin, pin: state.event.pin, teams };
 }
 
+/** Level numbers of the five rounds. */
+export const L = { faces: 1, bingo: 2, quiz: 3, lightning: 4, showdown: 5 } as const;
+
+/** Plays Tech Faces and Tech Bingo with nobody answering, so the next round to prepare is Quick Brain (Level 3). */
+export async function skipIntroRounds(admin: Client) {
+  for (let i = 0; i < 2; i++) {
+    await admin.post('/api/admin/round/prepare');
+    await admin.post('/api/admin/round/start');
+    await admin.post('/api/admin/round/end');
+  }
+}
+
 export async function startLevel(admin: Client, b: Booted) {
   await admin.post('/api/admin/round/prepare');
   await admin.post('/api/admin/round/start');

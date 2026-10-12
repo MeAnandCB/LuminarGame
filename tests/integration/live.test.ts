@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { SEED_ROUNDS } from '../../server/content/seed.js';
-import { TeamClient, adminClient, adminState, boot, connectSocket, correct, setupEvent, waitFor, wrong, type Booted, type Client } from './helpers.js';
+import { TeamClient, adminClient, adminState, boot, connectSocket, correct, setupEvent, skipIntroRounds, waitFor, wrong, type Booted, type Client } from './helpers.js';
 
 let b: Booted;
 afterEach(async () => {
@@ -16,9 +16,10 @@ const tick = () => b.h.realtime.tick();
 async function reelRush(n: number, settings?: Record<string, unknown>) {
   const env = await setupEvent(b, { teams: n, settings });
   await env.admin.post('/api/admin/registration/confirm');
+  await skipIntroRounds(env.admin);
   await env.admin.post('/api/admin/round/prepare');
   await env.admin.post('/api/admin/round/start');
-  await env.admin.post('/api/admin/round/end');
+  await env.admin.post('/api/admin/round/end'); // Level 3 (Quick Brain): nobody answers
   await env.admin.post('/api/admin/round/prepare');
   await env.admin.post('/api/admin/round/start');
   return env;
@@ -39,7 +40,7 @@ const adminRound = async (admin: Client) => {
   return s.rounds.find((r) => r.id === s.event.currentRoundId)!;
 };
 
-describe('Level 2 - Reel Rush (live)', () => {
+describe('Level 4 - Reel Rush (live)', () => {
   it('opens question 1 for everyone at once; answers are locked in silently and scored only at the reveal', async () => {
     b = await boot();
     const { admin, teams } = await reelRush(3);
@@ -51,9 +52,9 @@ describe('Level 2 - Reel Rush (live)', () => {
     expect(p.live.reveal).toBeNull();
     expect(JSON.stringify(p)).not.toMatch(/"answers"/);
 
-    const first = await teams[0]!.answer(correct(2, 0));
+    const first = await teams[0]!.answer(correct(4, 0));
     expect(first.json).toMatchObject({ outcome: 'locked', points: 0 }); // no hint about correctness
-    const second = await teams[1]!.answer(wrong(2, 0));
+    const second = await teams[1]!.answer(wrong(4, 0));
     expect(second.json.outcome).toBe('locked');
     expect((await teams[0]!.me()).score.total).toBe(0); // nothing is scored during the open phase
     expect((await pub()).live.answered).toBe(2);
@@ -64,9 +65,9 @@ describe('Level 2 - Reel Rush (live)', () => {
     tick();
     const rev = (await pub()).live;
     expect(rev.phase).toBe('reveal');
-    expect(rev.reveal).toMatchObject({ correctText: 'Drishyam', answered: 2, correctCount: 1, voided: false });
+    expect(rev.reveal).toMatchObject({ correctText: 'Sun Microsystems', answered: 2, correctCount: 1, voided: false });
     expect(rev.reveal.fastest).toMatchObject({ name: 'Team 1', bonus: 50 });
-    expect(rev.reveal.options.find((o: { id: string }) => o.id === 'a')).toMatchObject({ count: 1, correct: true });
+    expect(rev.reveal.options.find((o: { id: string }) => o.id === 'c')).toMatchObject({ count: 1, correct: true });
     // base 100 + full speed bonus 100 (answered instantly) + fastest finger 50
     expect((await teams[0]!.me()).score.total).toBe(250);
     expect((await teams[1]!.me()).score.total).toBe(0);
@@ -84,9 +85,9 @@ describe('Level 2 - Reel Rush (live)', () => {
   it('speed bonus shrinks with time, and the first correct answer is rewarded once', async () => {
     b = await boot();
     const { teams } = await reelRush(2);
-    await teams[0]!.answer(correct(2, 0));
+    await teams[0]!.answer(correct(4, 0));
     b.clock.advance(10_000); // half of the 20 s window
-    await teams[1]!.answer(correct(2, 0));
+    await teams[1]!.answer(correct(4, 0));
     b.clock.advance(10_001);
     tick();
     expect(ledger(teams[0]!.state.team.id).map((r) => r.kind)).toEqual(['answer', 'speed_bonus', 'fastest_bonus']);
@@ -100,8 +101,8 @@ describe('Level 2 - Reel Rush (live)', () => {
     await admin.post('/api/admin/round/live/advance'); // nobody answered Q1 -> reveal... (so streaks start at 0)
     await admin.post('/api/admin/round/live/advance');
     for (let q = 1; q <= 3; q++) {
-      await teams[0]!.answer(correct(2, q));
-      await teams[1]!.answer(q === 2 ? wrong(2, q) : correct(2, q));
+      await teams[0]!.answer(correct(4, q));
+      await teams[1]!.answer(q === 2 ? wrong(4, q) : correct(4, q));
       // all answered -> reveal opens immediately
       expect((await pub()).live.phase).toBe('reveal');
       await admin.post('/api/admin/round/live/advance');
@@ -118,26 +119,26 @@ describe('Level 2 - Reel Rush (live)', () => {
     b = await boot();
     const { admin, teams } = await reelRush(2);
     expect((await teams[0]!.me()).live!.doubleAvailable).toBe(true);
-    await teams[0]!.answer(correct(2, 0), { doubleDown: true });
-    await teams[1]!.answer(wrong(2, 0), { doubleDown: true });
+    await teams[0]!.answer(correct(4, 0), { doubleDown: true });
+    await teams[1]!.answer(wrong(4, 0), { doubleDown: true });
     await admin.post('/api/admin/round/live/advance'); // already revealed (all answered)
     expect(total(teams[0]!.state.team.id)).toBe(100 + 100 + 50 + 200); // answer + speed + fastest + double (answer + speed)
     expect(total(teams[1]!.state.team.id)).toBe(-100);
     expect((await teams[1]!.me()).live!.doubleAvailable).toBe(false);
     // second use is refused with a clear error and does not lock the answer
-    const again = await teams[0]!.answer(correct(2, 1), { doubleDown: true });
+    const again = await teams[0]!.answer(correct(4, 1), { doubleDown: true });
     expect(again.status).toBe(409);
     expect(again.json.error?.code).toBe('DOUBLE_USED');
-    expect((await teams[0]!.answer(correct(2, 1))).json.outcome).toBe('locked');
+    expect((await teams[0]!.answer(correct(4, 1))).json.outcome).toBe('locked');
   });
 
   it('a late answer does not consume Double Down; the deadline is inclusive', async () => {
     b = await boot();
     const { teams } = await reelRush(2);
     b.clock.advance(20_000); // exactly at the deadline: still accepted
-    expect((await teams[0]!.answer(correct(2, 0))).json.outcome).toBe('locked');
+    expect((await teams[0]!.answer(correct(4, 0))).json.outcome).toBe('locked');
     b.clock.advance(1);
-    const late = await teams[1]!.answer(correct(2, 0), { doubleDown: true });
+    const late = await teams[1]!.answer(correct(4, 0), { doubleDown: true });
     expect(late.json.outcome).toBe('late');
     expect((await teams[1]!.me()).live!.doubleAvailable).toBe(true);
     tick();
@@ -147,11 +148,11 @@ describe('Level 2 - Reel Rush (live)', () => {
   it('one answer per question; retries with the same request id are idempotent', async () => {
     b = await boot();
     const { teams } = await reelRush(2);
-    const a = await teams[0]!.answer(wrong(2, 0), { requestId: 'live-request-1' });
-    const dup = await teams[0]!.answer(wrong(2, 0), { requestId: 'live-request-1' });
+    const a = await teams[0]!.answer(wrong(4, 0), { requestId: 'live-request-1' });
+    const dup = await teams[0]!.answer(wrong(4, 0), { requestId: 'live-request-1' });
     expect(a.json.outcome).toBe('locked');
     expect(dup.json).toMatchObject({ outcome: 'locked', duplicate: true });
-    const changed = await teams[0]!.answer(correct(2, 0)); // cannot change your mind
+    const changed = await teams[0]!.answer(correct(4, 0)); // cannot change your mind
     expect(changed.json.outcome).toBe('rejected');
     b.clock.advance(20_001);
     tick();
@@ -162,7 +163,7 @@ describe('Level 2 - Reel Rush (live)', () => {
   it('closes the question early once every team has answered', async () => {
     b = await boot();
     const { teams } = await reelRush(3);
-    await Promise.all(teams.map((t) => t.answer(correct(2, 0))));
+    await Promise.all(teams.map((t) => t.answer(correct(4, 0))));
     expect((await pub()).live.phase).toBe('reveal');
     expect(teams.map((t) => total(t.state.team.id)).sort()).toEqual([200, 200, 250]);
   });
@@ -170,8 +171,8 @@ describe('Level 2 - Reel Rush (live)', () => {
   it('concurrent submissions from all teams are each scored exactly once', async () => {
     b = await boot();
     const { teams } = await reelRush(12);
-    await Promise.all(teams.map((t) => t.answer(correct(2, 0))));
-    expect(b.h.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM score_ledger WHERE kind = 'answer' AND round_id = (SELECT id FROM rounds WHERE level = 2)")!.n).toBe(12);
+    await Promise.all(teams.map((t) => t.answer(correct(4, 0))));
+    expect(b.h.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM score_ledger WHERE kind = 'answer' AND round_id = (SELECT id FROM rounds WHERE level = 4)")!.n).toBe(12);
     expect(b.h.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM score_ledger WHERE kind = 'fastest_bonus'")!.n).toBe(1);
   });
 
@@ -184,12 +185,12 @@ describe('Level 2 - Reel Rush (live)', () => {
     b.clock.advance(600_000);
     tick();
     expect((await pub()).live.phase).toBe('open'); // nothing moved while paused
-    expect((await teams[0]!.answer(correct(2, 0))).json.outcome).toBe('rejected');
+    expect((await teams[0]!.answer(correct(4, 0))).json.outcome).toBe('rejected');
     await admin.post('/api/admin/round/resume');
     const live = (await pub()).live;
     expect(live.phaseRemainingMs).toBe(8_000);
     expect(live.phaseEndsAt).toBe(b.clock.now() + 8_000);
-    expect((await teams[0]!.answer(correct(2, 0))).json.outcome).toBe('locked');
+    expect((await teams[0]!.answer(correct(4, 0))).json.outcome).toBe('locked');
     b.clock.advance(8_001);
     tick();
     expect((await pub()).live.phase).toBe('reveal');
@@ -198,7 +199,7 @@ describe('Level 2 - Reel Rush (live)', () => {
   it('host controls: reveal now, next question, and skip (void) a question', async () => {
     b = await boot();
     const { admin, teams } = await reelRush(2);
-    await teams[0]!.answer(correct(2, 0));
+    await teams[0]!.answer(correct(4, 0));
     await admin.post('/api/admin/round/live/advance'); // reveal now
     expect((await pub()).live.phase).toBe('reveal');
     expect(total(teams[0]!.state.team.id)).toBeGreaterThan(0);
@@ -206,7 +207,7 @@ describe('Level 2 - Reel Rush (live)', () => {
     expect((await pub()).live).toMatchObject({ phase: 'open', index: 1 });
 
     // skip voids question 2: answers are discarded, nobody scores, nobody loses a streak or life
-    await teams[0]!.answer(correct(2, 1));
+    await teams[0]!.answer(correct(4, 1));
     const before = total(teams[0]!.state.team.id);
     const skipped = await admin.post('/api/admin/round/live/skip');
     expect(skipped.status).toBe(200);
@@ -215,7 +216,7 @@ describe('Level 2 - Reel Rush (live)', () => {
     expect(b.h.ctx.db.get<{ status: string }>("SELECT status FROM live_question_log l JOIN challenges c ON c.id = l.challenge_id WHERE c.position = 1 AND l.status = 'voided'")).toBeTruthy();
     expect((await adminState(admin)).audit.some((a) => a.action === 'live.skip')).toBe(true);
     // late answers for the voided question are not accepted
-    const stale = await teams[1]!.answer(correct(2, 1), { challengeId: b.h.ctx.db.get<{ id: number }>("SELECT c.id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE r.level = 2 AND position = 1")!.id });
+    const stale = await teams[1]!.answer(correct(4, 1), { challengeId: b.h.ctx.db.get<{ id: number }>("SELECT c.id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE r.level = 4 AND position = 1")!.id });
     expect(stale.json.outcome).toBe('late');
     expect((await teams[1]!.me()).score.total).toBe(0);
   });
@@ -232,7 +233,7 @@ describe('Level 2 - Reel Rush (live)', () => {
     expect((await adminState(admin)).event.state).toBe('ROUND_ENDED');
     expect((await pub()).live).toBeNull();
     expect(total(teams[0]!.state.team.id)).toBe(0); // nobody answered anything
-    expect(SEED_ROUNDS[1]!.challenges).toHaveLength(12);
+    expect(SEED_ROUNDS[3]!.challenges).toHaveLength(12);
   });
 
   it('host controls are admin-only and need a running live round', async () => {
@@ -248,7 +249,7 @@ describe('Level 2 - Reel Rush (live)', () => {
   it('survives a server restart in the middle of a question', async () => {
     b = await boot();
     const { admin, teams } = await reelRush(2);
-    await teams[0]!.answer(correct(2, 0));
+    await teams[0]!.answer(correct(4, 0));
     b.clock.advance(5_000);
     tick();
     const cookies = new Map(teams[0]!.cookies);
@@ -275,7 +276,7 @@ describe('Level 2 - Reel Rush (live)', () => {
     const display = await connectSocket(b, { role: 'display' });
     const phone = await connectSocket(b, { role: 'team' }, teams[0]!.cookieHeader);
     await waitFor(() => display.publicStates.at(-1)?.live?.phase === 'open');
-    await phone.socket.emitWithAck('answer:submit', { requestId: 'sock-live-0001', answer: correct(2, 0) }).then((ack: { ok: boolean; result: { outcome: string } }) => expect(ack.result.outcome).toBe('locked'));
+    await phone.socket.emitWithAck('answer:submit', { requestId: 'sock-live-0001', answer: correct(4, 0) }).then((ack: { ok: boolean; result: { outcome: string } }) => expect(ack.result.outcome).toBe('locked'));
     await waitFor(() => display.publicStates.at(-1)?.live?.answered === 1);
     await admin.post('/api/admin/round/live/advance');
     await waitFor(() => display.publicStates.at(-1)?.live?.phase === 'reveal');
@@ -286,12 +287,12 @@ describe('Level 2 - Reel Rush (live)', () => {
   });
 });
 
-describe('Level 3 - Final Showdown (lives, steals, last team standing)', () => {
+describe('Level 5 - Final Showdown (lives, steals, last team standing)', () => {
   it('only finalists take part and everyone starts with three lives', async () => {
     b = await boot();
     const { admin, teams } = await reelRush(4, { finalists: 2 });
-    await teams[0]!.answer(correct(2, 0));
-    await teams[1]!.answer(correct(2, 0));
+    await teams[0]!.answer(correct(4, 0));
+    await teams[1]!.answer(correct(4, 0));
     await admin.post('/api/admin/round/end');
     await admin.post('/api/admin/qualification/open');
     await admin.post('/api/admin/round/prepare');
@@ -309,8 +310,8 @@ describe('Level 3 - Final Showdown (lives, steals, last team standing)', () => {
     const { admin, teams } = await showdown(3);
     // give Team 3 a head start so it is the richest team that can be robbed
     await admin.post(`/api/admin/teams/${teams[2]!.state.team.id}/score`, { points: 400, reason: 'test head start' });
-    await teams[0]!.answer(correct(3, 0)); // fastest correct
-    await teams[1]!.answer(wrong(3, 0)); // wrong
+    await teams[0]!.answer(correct(5, 0)); // fastest correct
+    await teams[1]!.answer(wrong(5, 0)); // wrong
     // Team 3 does not answer
     await admin.post('/api/admin/round/live/advance'); // reveal
     const live = (await pub()).live;
@@ -327,15 +328,15 @@ describe('Level 3 - Final Showdown (lives, steals, last team standing)', () => {
     b = await boot();
     const { admin, teams } = await showdown(3);
     for (let q = 0; q < 3; q++) {
-      await teams[0]!.answer(correct(3, q));
-      await teams[1]!.answer(correct(3, q));
+      await teams[0]!.answer(correct(5, q));
+      await teams[1]!.answer(correct(5, q));
       // team 3 stays silent
       await admin.post('/api/admin/round/live/advance'); // reveal
       await admin.post('/api/admin/round/live/advance'); // next
     }
     const me = await teams[2]!.me();
     expect(me.live).toMatchObject({ lives: 0, eliminated: true });
-    const out = await teams[2]!.answer(correct(3, 3));
+    const out = await teams[2]!.answer(correct(5, 3));
     expect(out.status).toBe(403);
     expect(out.json.error?.code).toBe('ELIMINATED');
     expect((await pub()).live.eligible).toBe(2);
@@ -347,8 +348,8 @@ describe('Level 3 - Final Showdown (lives, steals, last team standing)', () => {
     b = await boot();
     const { admin, teams } = await showdown(2);
     for (let q = 0; q < 3; q++) {
-      await teams[0]!.answer(correct(3, q));
-      await teams[1]!.answer(wrong(3, q));
+      await teams[0]!.answer(correct(5, q));
+      await teams[1]!.answer(wrong(5, q));
       await admin.post('/api/admin/round/live/advance');
       await admin.post('/api/admin/round/live/advance');
     }

@@ -26,6 +26,14 @@ describe('database migrations', () => {
     // new capabilities exist
     db.run("INSERT INTO score_ledger (event_id, team_id, kind, points, actor, idempotency_key, at_ms, created_at) VALUES (1,1,'steal',75,'system','k',6,'x')");
     db.run("INSERT INTO rounds (id, event_id, level, name, kind, config, instructions) VALUES (2, 1, 2, 'Live', 'lightning', '{}', 'i')");
+    // version 3: the Tech Faces / Tech Bingo kinds, bingo ledger rows and challenge pictures
+    db.run("INSERT INTO rounds (id, event_id, level, name, kind, config, instructions) VALUES (3, 1, 3, 'Faces', 'faces', '{}', 'i')");
+    db.run("INSERT INTO rounds (id, event_id, level, name, kind, config, instructions) VALUES (4, 1, 4, 'Bingo', 'bingo', '{}', 'i')");
+    db.run("INSERT INTO challenges (round_id, position, kind, title, prompt, answers, points, image) VALUES (3, 0, 'choice', 'Face 1', 'p', '[\"a\"]', 100, '/faces/01')");
+    db.run("INSERT INTO score_ledger (event_id, team_id, kind, points, actor, idempotency_key, at_ms, created_at) VALUES (1,1,'bingo_line',75,'system','bl',8,'x')");
+    db.run("INSERT INTO score_ledger (event_id, team_id, kind, points, actor, idempotency_key, at_ms, created_at) VALUES (1,1,'bingo_blackout',250,'system','bb',9,'x')");
+    expect(db.get<{ image: string | null }>('SELECT image FROM challenges WHERE id = 1')!.image).toBeNull(); // existing rows have no picture
+    expect(() => db.run("INSERT INTO rounds (id, event_id, level, name, kind, config, instructions) VALUES (9, 1, 9, 'Nope', 'karaoke', '{}', 'i')")).toThrow(/CHECK/);
     expect(db.all('PRAGMA foreign_key_check')).toEqual([]);
     expect(db.get<{ foreign_keys: number }>('PRAGMA foreign_keys')!.foreign_keys).toBe(1);
     // uniqueness guarantees survived the table rebuilds

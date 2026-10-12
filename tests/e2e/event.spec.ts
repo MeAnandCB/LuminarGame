@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { ADMIN, AdminApi, PROJECTOR, answerFor, playLiveRound, registerTeam, solveQuiz } from './helpers';
+import { ADMIN, AdminApi, PROJECTOR, answerFor, playLiveRound, registerTeam, skipIntroRounds, solveQuiz } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
-test('complete event: admin, two phones, projector, 3 levels, podium, CSV', async ({ browser, playwright }) => {
+test('complete event: admin, two phones, projector, 5 levels, podium, CSV', async ({ browser, playwright }) => {
   // ---- 1. admin signs in through the UI and creates the event -----------------
   const adminCtx = await browser.newContext({ viewport: { width: 1366, height: 800 } });
   const admin = await adminCtx.newPage();
@@ -25,8 +25,7 @@ test('complete event: admin, two phones, projector, 3 levels, podium, CSV', asyn
   const adminApi = new AdminApi(apiCtx);
   await adminApi.login();
   // generous live-question timers so a slow machine cannot make the UI steps race the clock
-  await adminApi.patch('/round/2/config', { questionSec: 120 });
-  await adminApi.patch('/round/3/config', { questionSec: 120 });
+  for (const level of [1, 2, 4, 5]) await adminApi.patch(`/round/${level}/config`, { questionSec: 120 });
 
   // two finalists: the Showdown is a head-to-head between the two teams
   await admin.getByRole('tab', { name: 'Event' }).click();
@@ -68,18 +67,75 @@ test('complete event: admin, two phones, projector, 3 levels, podium, CSV', asyn
   await expect(a.page.getByText("You're in the lobby")).toBeVisible();
   await expect(display.getByRole('heading', { name: 'Registration closed' })).toBeVisible();
 
-  // ---- 5. Level 1 ------------------------------------------------------------------
+  // ---- 5. Level 1: Tech Faces (live) -----------------------------------------------
+  await admin.getByTestId('act-round.prepare').click();
+  await expect(a.page.getByText('Waiting for the host to press start')).toBeVisible();
+  await admin.getByTestId('act-round.start').click();
+  await expect(a.page.getByText('Question 1 of 10')).toBeVisible();
+  await expect(a.page.getByText('Tech Faces').first()).toBeVisible();
+  // the picture is on the projector (a silhouette stands in until real photos are added) with the four names
+  await expect(display.getByRole('img', { name: /Photo not added yet|mystery tech personality/ })).toBeVisible();
+  await expect(display.getByRole('list', { name: 'Answer options' }).getByRole('listitem')).toHaveCount(4);
+  await expect(a.page.getByRole('img', { name: /Photo not added yet|mystery tech personality/ })).toBeVisible();
+
+  await a.page.getByRole('radio', { name: /Steve Jobs/ }).click();
+  await a.page.getByRole('button', { name: 'Lock in answer' }).click();
+  await expect(a.page.getByText(/Answer locked in/)).toBeVisible();
+  await b.page.getByRole('radio', { name: /Steve Wozniak/ }).click();
+  await b.page.getByRole('button', { name: 'Lock in answer' }).click();
+  // both answered -> the question closes by itself and the reveal appears everywhere
+  await expect(a.page.getByText('Correct!')).toBeVisible();
+  await expect(a.page.getByText('Fastest finger')).toBeVisible();
+  await expect(a.page.getByText(/Co-founded Apple/)).toBeVisible(); // the fact after the reveal
+  await expect(b.page.getByText('Wrong answer')).toBeVisible();
+  await expect(display.getByText(/Fastest finger: Alpha Wolves/)).toBeVisible();
+  await expect(display.getByText(/Co-founded Apple/)).toBeVisible();
+  await adminApi.post('/round/live/advance'); // leave the reveal -> question 2
+  await playLiveRound(adminApi, [a.page, b.page], 1, (i, q) => (i === 0 || q % 2 === 0 ? 'right' : 'wrong'), 1);
+  await expect(admin.getByTestId('event-state')).toHaveText('ROUND ENDED');
+  const l1 = await (await a.page.request.get('/api/team/me')).json();
+  expect(l1.score.round).toBeGreaterThan(1500);
+
+  // ---- 5b. Level 2: Tech Bingo (live) ------------------------------------------------
+  await admin.getByTestId('act-round.prepare').click();
+  await admin.getByTestId('act-round.start').click();
+  await expect(a.page.getByText('Call 1 of 16')).toBeVisible();
+  await expect(a.page.getByRole('group', { name: 'Your bingo card' }).getByRole('button')).toHaveCount(16);
+  await expect(display.getByRole('list', { name: /Bingo board/ }).getByRole('listitem')).toHaveCount(16);
+  await expect(display.getByText(/real one on record|first one on record/)).toBeVisible(); // the clue is on the projector
+  // Alpha taps the right tile (Bug) and locks in, Beta taps the wrong one (Cloud)
+  await a.page.getByRole('button', { name: /^Bug/ }).click();
+  await a.page.getByRole('button', { name: 'Lock in Bug' }).click();
+  await expect(a.page.getByText(/Answer locked in: Bug/)).toBeVisible();
+  await b.page.getByRole('button', { name: /^Cloud/ }).click();
+  await b.page.getByRole('button', { name: 'Lock in Cloud' }).click();
+  await expect(a.page.getByText('Correct!')).toBeVisible();
+  await expect(a.page.getByRole('button', { name: /^Bug, marked/ })).toBeVisible(); // the tile is stamped on the card
+  await expect(b.page.getByText('Wrong answer')).toBeVisible();
+  await expect(b.page.getByRole('button', { name: /^Bug, called but missed/ })).toBeVisible();
+  await expect(display.getByRole('listitem', { name: /^Bug, called number 1/ })).toBeVisible();
+  await adminApi.post('/round/live/advance');
+  // Alpha is perfect for the rest of the card (blackout), Beta only gets the even-numbered calls
+  await playLiveRound(adminApi, [a.page, b.page], 2, (i, q) => (i === 0 || q % 2 === 1 ? 'right' : 'wrong'), 1);
+  await expect(admin.getByTestId('event-state')).toHaveText('ROUND ENDED');
+  const l2b = await (await a.page.request.get('/api/team/me')).json();
+  expect(l2b.live.bingo).toMatchObject({ lines: 10 });
+  expect(l2b.live.bingo.marked).toHaveLength(16);
+  expect(l2b.score.round).toBeGreaterThanOrEqual(16 * 50 + 10 * 75 + 250); // every call, every line and the blackout, plus speed bonuses
+
+  // ---- 5c. Level 3: Quick Brain (self-paced) ------------------------------------------------------------------
   await admin.getByTestId('act-round.prepare').click();
   await expect(a.page.getByText('Waiting for the host to press start')).toBeVisible();
   await admin.getByTestId('act-round.start').click();
   await expect(a.page.getByText('Question 1 of 12')).toBeVisible();
+  await expect(a.page.getByText('Quick Brain').first()).toBeVisible();
 
   // Alpha answers question 1 correctly through the UI, Beta answers wrongly
-  await a.page.getByRole('radio', { name: /Jeethu Joseph/ }).click();
+  await a.page.getByRole('radio', { name: /Central Processing Unit/ }).click();
   await a.page.getByRole('button', { name: 'Lock in answer' }).click();
   await expect(a.page.getByRole('status').filter({ hasText: /Correct! \+\d+/ })).toBeVisible();
   await expect(a.page.getByText('Question 2 of 12')).toBeVisible();
-  await b.page.getByRole('radio', { name: /Priyadarshan/ }).click();
+  await b.page.getByRole('radio', { name: /Computer Personal Unit/ }).click();
   await b.page.getByRole('button', { name: 'Lock in answer' }).click();
   await expect(b.page.getByRole('status').filter({ hasText: 'Incorrect' })).toBeVisible();
 
@@ -109,24 +165,24 @@ test('complete event: admin, two phones, projector, 3 levels, podium, CSV', asyn
   await admin.getByRole('button', { name: /Reveal answers/ }).click();
   await expect(display.getByText('Answer key')).toBeVisible();
 
-  // ---- 6. Level 2: Reel Rush (live) ----------------------------------------------
+  // ---- 6. Level 4: Reel Rush (live) ----------------------------------------------
   await admin.getByTestId('act-round.prepare').click();
   await admin.getByTestId('act-round.start').click();
   await expect(a.page.getByText('Question 1 of 12')).toBeVisible();
   await expect(a.page.getByText('Reel Rush').first()).toBeVisible();
   await expect(display.getByRole('timer')).toBeVisible();
-  await expect(display.getByText(/Georgekutty/)).toBeVisible(); // the question is on the projector
+  await expect(display.getByText(/Java programming language/)).toBeVisible(); // the question is on the projector
   await expect(display.getByRole('list', { name: 'Answer options' }).getByRole('listitem')).toHaveCount(4);
   await expect(admin.getByTestId('live-status')).toContainText('1 / 12 · open');
 
   // Alpha answers correctly; Beta bets a Double Down on a wrong answer
-  await a.page.getByRole('radio', { name: /Drishyam/ }).click();
+  await a.page.getByRole('radio', { name: /Sun Microsystems/ }).click();
   await a.page.getByRole('button', { name: 'Lock in answer' }).click();
   await expect(a.page.getByText(/Answer locked in/)).toBeVisible();
   // locked-in answers do not reveal correctness or move the score yet
   await expect(a.page.getByText('Correct!')).toHaveCount(0);
   await b.page.getByRole('checkbox', { name: /Double Down/ }).check();
-  await b.page.getByRole('radio', { name: /Oru Vadakkan Selfie/ }).click();
+  await b.page.getByRole('radio', { name: /Intel/ }).click();
   await b.page.getByRole('button', { name: /Lock in with Double Down/ }).click();
   // Beta answers last, so the reveal can land before the locked-in panel is painted: accept either.
   await expect(b.page.getByText(/Answer locked in|Wrong answer/)).toBeVisible();
@@ -136,13 +192,13 @@ test('complete event: admin, two phones, projector, 3 levels, podium, CSV', asyn
   await expect(a.page.getByText('Fastest finger')).toBeVisible();
   await expect(b.page.getByText('Wrong answer')).toBeVisible();
   await expect(b.page.getByText('Double Down failed')).toBeVisible();
-  await expect(display.getByRole('status').filter({ hasText: 'Correct answer' })).toContainText('Drishyam');
+  await expect(display.getByRole('status').filter({ hasText: 'Correct answer' })).toContainText('Sun Microsystems');
   await expect(display.getByText(/Fastest finger: Alpha Wolves/)).toBeVisible();
 
   // host skips question 2 (void): nobody scores, question 3 opens
   await admin.getByTestId('act-live.advance').click(); // reveal -> question 2
   await expect(admin.getByTestId('live-status')).toContainText('2 / 12 · open');
-  await a.page.getByRole('radio', { name: /Lucifer/ }).click();
+  await a.page.getByRole('radio', { name: /Qualcomm/ }).click();
   await a.page.getByRole('button', { name: 'Lock in answer' }).click();
   const scoreBeforeSkip = (await (await a.page.request.get('/api/team/me')).json()).score.total;
   await admin.getByTestId('act-live.skip').click();
@@ -152,7 +208,7 @@ test('complete event: admin, two phones, projector, 3 levels, podium, CSV', asyn
   expect((await (await a.page.request.get('/api/team/me')).json()).score.total).toBe(scoreBeforeSkip);
 
   // the rest of Reel Rush: Alpha always right, Beta right except every third question
-  await playLiveRound(adminApi, [a.page, b.page], 2, (i, q) => (i === 0 || q % 3 !== 0 ? 'right' : 'wrong'), 2);
+  await playLiveRound(adminApi, [a.page, b.page], 4, (i, q) => (i === 0 || q % 3 !== 0 ? 'right' : 'wrong'), 2);
   await expect(admin.getByTestId('event-state')).toHaveText('ROUND ENDED');
   const l2 = await (await a.page.request.get('/api/team/me')).json();
   expect(l2.score.round).toBeGreaterThan(1000);
@@ -161,28 +217,28 @@ test('complete event: admin, two phones, projector, 3 levels, podium, CSV', asyn
   // ---- 7. qualification (two finalists) -------------------------------------------------
   await admin.getByTestId('act-qualification.open').click();
   await expect(admin.getByTestId('event-state')).toHaveText('QUALIFICATION');
-  await expect(a.page.getByText('You qualified for The Final Hack')).toBeVisible();
-  await expect(b.page.getByText('You qualified for The Final Hack')).toBeVisible();
+  await expect(a.page.getByText('You qualified for the Final Showdown')).toBeVisible();
+  await expect(b.page.getByText('You qualified for the Final Showdown')).toBeVisible();
   await expect(display.getByRole('heading', { name: 'Finalists' })).toBeVisible();
   await expect(display.getByRole('listitem').filter({ hasText: 'Alpha Wolves' })).toBeVisible();
 
-  // ---- 8. Level 3: Final Showdown ----------------------------------------------------------
+  // ---- 8. Level 5: Final Showdown ----------------------------------------------------------
   await admin.getByTestId('act-round.prepare').click();
   await admin.getByTestId('act-round.start').click();
   await expect(a.page.getByText('Final Showdown').first()).toBeVisible();
   await expect(a.page.getByLabel('3 lives left')).toBeVisible();
   await expect(display.getByRole('heading', { name: 'Who is still standing?' })).toBeVisible();
   // Alpha answers question 1 through the UI; Beta answers wrongly and loses a life
-  await a.page.getByRole('radio', { name: /Chemmeen/ }).click();
+  await a.page.getByRole('radio', { name: /Mozilla/ }).click();
   await a.page.getByRole('button', { name: 'Lock in answer' }).click();
-  await b.page.getByRole('radio', { name: /Neelakuyil/ }).click();
+  await b.page.getByRole('radio', { name: /Apache/ }).click();
   await b.page.getByRole('button', { name: 'Lock in answer' }).click();
   await expect(b.page.getByText('You lost a life')).toBeVisible();
   await expect(display.getByText(/stole \d+ from Beta Hawks/)).toBeVisible();
   await expect(b.page.getByLabel('2 lives left')).toBeVisible();
   // Beta keeps missing: three strikes and out, the round ends with Alpha as last team standing
   await adminApi.post('/round/live/advance'); // leave reveal (Q1 done)
-  await playLiveRound(adminApi, [a.page, b.page], 3, (i) => (i === 0 ? 'right' : 'wrong'), 1);
+  await playLiveRound(adminApi, [a.page, b.page], 5, (i) => (i === 0 ? 'right' : 'wrong'), 1);
   await expect(admin.getByTestId('event-state')).toHaveText('ROUND ENDED');
   const survivors = await (await a.page.request.get('/api/team/me')).json();
   expect(survivors.live.eliminated).toBe(false);
@@ -207,10 +263,10 @@ test('complete event: admin, two phones, projector, 3 levels, podium, CSV', asyn
   for (const row of state.leaderboard) {
     const cells = lines.find((l: string) => l.split(',')[1] === row.name)!.split(',');
     expect(Number(cells[0])).toBe(row.rank);
-    expect(Number(cells[8])).toBe(row.total);
+    expect(Number(cells[10])).toBe(row.total);
   }
   expect(state.leaderboard[0].name).toBe('Alpha Wolves');
-  expect(answerFor(3, 0)).toBe('b');
+  expect(answerFor(5, 0)).toBe('a');
 
   // ---- 11. audit trail ---------------------------------------------------------------------
   await admin.getByRole('tab', { name: 'Audit log' }).click();
@@ -228,12 +284,13 @@ test('a team that loses Wi-Fi reconnects with its progress intact', async ({ bro
   const pin = (await api.state()).event.pin as string;
   const t = await registerTeam(browser, pin, 'Wanderers', 'W1', 'W2');
   await api.post('/registration/confirm');
+  await skipIntroRounds(api); // Quick Brain is the self-paced round this scenario needs
   await api.post('/round/prepare');
   await api.post('/round/start');
   await expect(t.page.getByText('Question 1 of 12')).toBeVisible();
   await expect(t.page.getByRole('status').filter({ hasText: /^\W*Connected$/ })).toBeVisible();
 
-  await t.page.getByRole('radio', { name: /Jeethu Joseph/ }).click();
+  await t.page.getByRole('radio', { name: /Central Processing Unit/ }).click();
   await t.page.getByRole('button', { name: 'Lock in answer' }).click();
   await expect(t.page.getByText('Question 2 of 12')).toBeVisible();
 

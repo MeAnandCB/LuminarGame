@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { ADMIN_PW, Client, TeamClient, adminClient, boot, connectSocket, setupEvent, startLevel, waitFor, type Booted } from './helpers.js';
+import { ADMIN_PW, Client, TeamClient, adminClient, boot, connectSocket, setupEvent, skipIntroRounds, startLevel, waitFor, type Booted } from './helpers.js';
 
 let b: Booted;
 afterEach(async () => {
@@ -117,6 +117,7 @@ describe('socket authorisation and data exposure', () => {
     b = await boot();
     const { admin, teams } = await setupEvent(b, { teams: 2 });
     await admin.post('/api/admin/registration/confirm');
+    await skipIntroRounds(admin);
     await startLevel(admin, b);
     const display = await connectSocket(b, { role: 'display' });
     const team = await connectSocket(b, { role: 'team' }, teams[0]!.cookieHeader);
