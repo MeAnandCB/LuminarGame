@@ -7,7 +7,7 @@ import { speedBonus } from '../game/scoring.js';
 import { acceptsSubmissions, elapsedClock } from '../game/timer.js';
 import { AppError, type ChallengeRow, type Ctx, type TeamRow } from '../engine/context.js';
 import type { AnswerOutcome, AnswerResult } from '../../shared/types.js';
-import { award, eligibleForRound, ensureProgress, result, type SubmitInput } from './shared.js';
+import { award, eligibilityProblem, ensureProgress, result, type SubmitInput } from './shared.js';
 
 export function submitQuiz(ctx: Ctx, input: SubmitInput): AnswerResult {
   const out = ctx.db.tx(() => {
@@ -21,7 +21,8 @@ export function submitQuiz(ctx: Ctx, input: SubmitInput): AnswerResult {
     if (team.status !== 'approved') throw new AppError(403, 'NOT_APPROVED', 'Your team has not been approved.');
     const round = ctx.currentRound(ev);
     if (!round || round.kind !== 'quiz' || !['ROUND_RUNNING', 'ROUND_PAUSED', 'ROUND_ENDED'].includes(ev.state)) throw new AppError(409, 'NOT_RUNNING', 'No round is running right now.');
-    if (!eligibleForRound(team, round)) throw new AppError(403, 'NOT_ELIGIBLE', 'Only finalists can play this round.');
+    const notEligible = eligibilityProblem(team, round);
+    if (notEligible) throw new AppError(403, 'NOT_ELIGIBLE', notEligible);
 
     const cfg = ctx.roundConfig(round);
     const items = ctx.challenges(round.id);

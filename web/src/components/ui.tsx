@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import QRCode from 'qrcode';
 import type { ConnStatus } from '../lib/realtime';
-import type { LeaderboardRow } from '../../../shared/types';
+import type { LeaderboardRow, RoundKind } from '../../../shared/types';
 
 export function ConnBadge({ status }: { status: ConnStatus }) {
   const map: Record<ConnStatus, { text: string; cls: string; dot: string }> = {
@@ -131,18 +131,22 @@ export function Vitals({ row }: { row: LeaderboardRow }) {
   return (
     <>
       {row.lives !== null && (
-        <span className="ml-2 whitespace-nowrap text-[0.85em]" aria-label={row.eliminated ? 'eliminated' : `${row.lives} lives left`}>
+        <span role="img" className="ml-2 whitespace-nowrap text-[0.85em]" aria-label={row.eliminated ? 'eliminated' : `${row.lives} lives left`}>
           {row.eliminated ? <span className="badge badge-bad">OUT</span> : <span className="beat text-bad" aria-hidden="true">{'♥'.repeat(Math.max(0, row.lives))}</span>}
         </span>
       )}
       {row.streak >= 2 && !row.eliminated && (
-        <span className="ml-2 whitespace-nowrap text-[0.85em] font-bold text-warn" aria-label={`streak of ${row.streak}`}>
+        <span role="img" className="ml-2 whitespace-nowrap text-[0.85em] font-bold text-warn" aria-label={`streak of ${row.streak}`}>
           <span aria-hidden="true">🔥{row.streak}</span>
         </span>
       )}
     </>
   );
 }
+
+/** The teams that actually play `round`: nobody the host already cut, and finalists only in the Final Showdown. */
+export const playingRows = (rows: LeaderboardRow[], round: { level: number; kind: RoundKind }): LeaderboardRow[] =>
+  rows.filter((r) => (r.outAfter === null || round.level <= r.outAfter) && (round.kind !== 'showdown' || r.qualified !== false));
 
 /** Ids of teams to flag as offline in every Leaderboard below (the projector provides it; phones leave it empty). */
 export const OfflineTeamsContext = createContext<ReadonlySet<number>>(new Set());
@@ -166,7 +170,7 @@ export function Leaderboard({ rows, provisional, hidden, highlightId, compact, s
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={r.teamId} style={{ animationDelay: `${Math.min(i, 12) * 40}ms` }} className={`row-in ${!hidden && r.rank >= 1 && r.rank <= 3 ? `rank-${r.rank}` : ''} ${r.teamId === highlightId ? 'outline outline-2 outline-neon' : offlineIds.has(r.teamId) ? 'outline outline-2 outline-bad' : ''} bg-panel2/80 ${r.eliminated ? 'opacity-60' : ''}`}>
+            <tr key={r.teamId} style={{ animationDelay: `${Math.min(i, 12) * 40}ms` }} className={`row-in ${!hidden && r.rank >= 1 && r.rank <= 3 ? `rank-${r.rank}` : ''} ${r.teamId === highlightId ? 'outline outline-2 outline-neon' : offlineIds.has(r.teamId) ? 'outline outline-2 outline-bad' : ''} bg-panel2/80 ${r.eliminated || r.outAfter !== null ? 'opacity-60' : ''}`}>
               <td className="rounded-l-xl px-3 py-2 text-neon">{hidden ? '' : <RankMark rank={r.rank} />}</td>
               <td className="w-full max-w-0 truncate px-2 py-2 font-semibold">
                 <span className={r.eliminated ? 'line-through' : ''}>{r.name}</span>
@@ -181,9 +185,10 @@ export function Leaderboard({ rows, provisional, hidden, highlightId, compact, s
               )}
               <td className="tnum px-2 py-2 text-right font-black">{hidden ? '•••' : <AnimatedNumber value={r.total} />}</td>
               <td className="rounded-r-xl px-3 py-2 text-right">
-                {r.qualified === true && <span className="badge badge-ok">✔ Finalist</span>}
-                {r.qualified === false && <span className="badge">Out</span>}
-                {r.qualified === null && !r.connected && !hideOffline && <span className="badge badge-warn" title="Not connected">offline</span>}
+                {r.outAfter !== null && <span className="badge whitespace-nowrap" title={`Cut after Level ${r.outAfter}`}>Out · L{r.outAfter}</span>}
+                {r.outAfter === null && r.qualified === true && <span className="badge badge-ok">✔ Finalist</span>}
+                {r.outAfter === null && r.qualified === false && <span className="badge">Out</span>}
+                {r.qualified === null && r.outAfter === null && !r.connected && !hideOffline && <span className="badge badge-warn" title="Not connected">offline</span>}
               </td>
             </tr>
           ))}

@@ -1,5 +1,6 @@
 import type { Ctx, EventRow, RoundRow, TeamRow, ChallengeRow } from './context.js';
 import { computeStandings, qualificationVisible, toRows, type Standing } from './standings.js';
+import { cutoffSummary } from './cutoff.js';
 import { eligibleForRound } from '../games/shared.js';
 import { livePublic, teamLive } from '../games/live.js';
 import { isLive } from '../game/scoring.js';
@@ -73,7 +74,7 @@ export function publicState(ctx: Ctx): PublicState {
   const ev = ctx.currentEvent();
   const now = ctx.clock.now();
   if (!ev) {
-    return { serverNow: now, event: null, round: null, nextLevel: null, counts: { teams: 0, connected: 0, submissions: 0, finished: 0, capacity: 20 }, leaderboard: [], provisional: false, scoresHidden: false, recent: [], finalists: [], podium: null, reveal: null, live: null };
+    return { serverNow: now, event: null, round: null, nextLevel: null, counts: { teams: 0, connected: 0, submissions: 0, finished: 0, capacity: 20 }, leaderboard: [], provisional: false, scoresHidden: false, recent: [], finalists: [], cutoff: null, podium: null, reveal: null, live: null };
   }
   const standings = computeStandings(ctx, ev);
   const hidden = scoresHidden(ctx, ev);
@@ -95,6 +96,7 @@ export function publicState(ctx: Ctx): PublicState {
     scoresHidden: hidden,
     recent: hidden ? [] : recent(ctx, ev),
     finalists: showQual ? rows.filter((r) => r.qualified).map((r) => ({ teamId: r.teamId, name: r.name })) : [],
+    cutoff: cutoffSummary(ctx, ev, round),
     podium: ev.state === 'EVENT_COMPLETED' ? rows.slice(0, 3) : null,
     reveal: reveal(ctx, ev),
     live: round ? livePublic(ctx, ev, round) : null,
@@ -123,6 +125,7 @@ export function teamState(ctx: Ctx, team: TeamRow, cached?: Standing[]): TeamSta
     rank: me && !hidden ? me.rank : null,
     rankHidden: hidden,
     qualified: qualificationVisible(ctx, ev) ? team.qualified === 1 : null,
+    outAfter: team.out_level,
     eligible: false,
     progress: null,
     challenge: null,
@@ -196,7 +199,7 @@ export function adminState(ctx: Ctx): AdminState | null {
   const devices = new Map(ctx.db.all<{ team_id: number; n: number }>('SELECT team_id, COUNT(*) n FROM team_sessions GROUP BY team_id').map((r) => [r.team_id, r.n]));
   const adminTeams: AdminTeam[] = teams.map((t) => ({
     id: t.id, name: t.name, players: [t.player1, t.player2], code: t.team_code, status: t.status, connected: ctx.isConnected(t.id), awaySince: awaySince(ctx, ev, t.id),
-    devices: devices.get(t.id) ?? 0, total: totals.get(t.id) ?? 0, qualified: t.qualified === 1,
+    devices: devices.get(t.id) ?? 0, total: totals.get(t.id) ?? 0, qualified: t.qualified === 1, outAfter: t.out_level,
     duplicateName: (t.status === 'pending' || t.status === 'approved') && (nameCount.get(loose(t.name)) ?? 0) > 1, createdAt: t.created_at,
   }));
   const rounds: AdminRound[] = ctx.rounds(ev.id).map((r) => ({

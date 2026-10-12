@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { isLive, liveDurationSec, parseRoundConfig } from '../game/scoring.js';
 import { AppError, type Ctx, type TeamRow } from './context.js';
 import { award } from '../games/shared.js';
+import { applyCutoff } from './cutoff.js';
 import { computeStandings, qualificationVisible, writeSnapshot } from './standings.js';
 import type { RoundConfig } from '../../shared/types.js';
 
@@ -13,6 +14,9 @@ export function adjustScore(ctx: Ctx, actor: string, teamId: number, points: num
   const total = ctx.db.tx(() => {
     award(ctx, { ev, teamId, roundId: ev.current_round_id, challengeId: null, kind: 'admin_adjust', points, key: `adjust:${crypto.randomUUID()}`, actor, reason });
     ctx.audit(ev.id, actor, 'score.adjust', { teamId, team: team.name, points, reason });
+    // Until the next round is prepared the cut-off follows the standings, so a correction can move a team across the line.
+    const justEnded = ev.state === 'ROUND_ENDED' ? ctx.currentRound(ev) : undefined;
+    if (justEnded) applyCutoff(ctx, ev, justEnded.level, actor);
     return ctx.db.get<{ t: number }>('SELECT COALESCE(SUM(points),0) t FROM score_ledger WHERE team_id = ?', teamId)!.t;
   });
   // Keep official snapshots in step with manual corrections.
@@ -68,12 +72,12 @@ export function exportCsv(ctx: Ctx): string {
   const teams = new Map(ctx.db.all<TeamRow>('SELECT * FROM teams WHERE event_id = ?', ev.id).map((t) => [t.id, t]));
   const perRound = (teamId: number, roundId: number) => ctx.db.get<{ p: number }>('SELECT COALESCE(SUM(points),0) p FROM score_ledger WHERE team_id = ? AND round_id = ?', teamId, roundId)!.p;
   const unassigned = (teamId: number) => ctx.db.get<{ p: number }>('SELECT COALESCE(SUM(points),0) p FROM score_ledger WHERE team_id = ? AND round_id IS NULL', teamId)!.p;
-  const head = ['Rank', 'Team', 'Player 1', 'Player 2', ...rounds.map((r) => `Level ${r.level} points`), 'Unassigned adjustments', 'Total', 'Challenges solved', 'Finalist', 'Tied on all criteria'];
+  const head = ['Rank', 'Team', 'Player 1', 'Player 2', ...rounds.map((r) => `Level ${r.level} points`), 'Unassigned adjustments', 'Total', 'Challenges solved', 'Finalist', 'Out after level', 'Tied on all criteria'];
   const lines = [head.map(csvCell).join(',')];
   for (const s of standings) {
     const t = teams.get(s.teamId)!;
     lines.push(
-      [s.rank, s.name, t.player1, t.player2, ...rounds.map((r) => perRound(s.teamId, r.id)), unassigned(s.teamId), s.total, s.solved, showQual ? (t.qualified ? 'yes' : 'no') : '', s.tied ? 'yes' : 'no'].map(csvCell).join(','),
+      [s.rank, s.name, t.player1, t.player2, ...rounds.map((r) => perRound(s.teamId, r.id)), unassigned(s.teamId), s.total, s.solved, showQual ? (t.qualified ? 'yes' : 'no') : '', t.out_level ?? '', s.tied ? 'yes' : 'no'].map(csvCell).join(','),
     );
   }
   return lines.join('\r\n') + '\r\n';

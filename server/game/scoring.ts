@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { EventSettings, RoundConfig, RoundKind } from '../../shared/types.js';
+import { CUTOFF_LEVELS, type EventSettings, type RoundConfig, type RoundKind } from '../../shared/types.js';
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
@@ -34,6 +34,10 @@ export const eventSettingsSchema = z.object({
   maxTeams: z.number().int().min(1).max(20),
   autoApprove: z.boolean(),
   finalists: z.number().int().min(1).max(20),
+  advance: z
+    .array(z.number().int().min(1).max(20).nullable())
+    .length(CUTOFF_LEVELS.length)
+    .default(() => CUTOFF_LEVELS.map(() => null)),
   liveScores: z.boolean(),
 });
 
@@ -41,8 +45,10 @@ export const DEFAULT_EVENT_SETTINGS: EventSettings = {
   maxTeams: 20,
   autoApprove: true,
   finalists: 5,
+  advance: CUTOFF_LEVELS.map(() => null),
   liveScores: true,
 };
+
 
 const BASE: RoundConfig = {
   durationSec: 600,

@@ -9,7 +9,7 @@ A real-time, local-network multiplayer tech competition for a live student event
 | Admin | `http://<laptop-ip>:3000/admin` | host, password protected |
 | Coordinator | `http://<laptop-ip>:3000/coordinator` | whoever conducts the live rounds; same admin sign-in, shows the answer keys |
 
-The game, five rounds of tech: **Level 1 Tech Faces** (live: identify the tech personality in the picture) → **Level 2 Tech Bingo** (live: a shuffled 4x4 bingo card per team, host-called clues, line and blackout bonuses) → **Level 3 Quick Brain** (self-paced quiz, with a Skip button) → **Level 4 Reel Rush** (live: speed, streaks, Double Down) → qualification (top *N* teams, default 5) → **Level 5 Final Showdown** (finalists only: lives, steals, last team standing) → podium.
+The game, five rounds of tech: **Level 1 Tech Faces** (live: identify the tech personality in the picture) → **Level 2 Tech Bingo** (live: a shuffled 4x4 bingo card per team, host-called clues, line and blackout bonuses) → **Level 3 Quick Brain** (self-paced quiz, with a Skip button) → **Level 4 Reel Rush** (live: speed, streaks, Double Down) → qualification (top *N* teams, default 5; the host can also cut the field after Levels 1-3) → **Level 5 Final Showdown** (finalists only: lives, steals, last team standing) → podium.
 
 ---
 
@@ -76,12 +76,18 @@ Configuration (`.env`, never commit it): `PORT`, `HOST`, `DB_PATH`, `PUBLIC_URL`
 
 ## 4. Running the event (host checklist)
 
-1. **Event tab:** set name, capacity (≤ 20), finalists count, auto-approve, live-scores on/off. **Rounds & scoring:** preview every question (tick *show answer keys*), adjust timers/points/hint penalties. Scoring locks once a round starts.
+1. **Event tab:** set name, capacity (≤ 20), auto-approve, live-scores on/off, and **Advancement** (below). **Rounds & scoring:** preview every question (tick *show answer keys*), adjust timers/points/hint penalties. Scoring locks once a round starts.
 2. **Control → Open registration.** The projector shows the PIN and QR code and fills 20 team slots live.
 3. **Teams tab:** approve/reject/remove (only before the first round). **Close registration & confirm teams** moves everyone to the lobby.
 4. **Add the Tech Faces photos** (see §5a) before the event, then **Prepare Level 1** (teams see the instructions) → **Start round**. Levels 1, 2, 4 and 5 are live: use **Close question now / Next question** to move at your own pace (or let the timers run), or hand the loop to a coordinator (below). Pause/Resume/End as needed. After a round ends, optionally **Reveal answers** on the projector and phones.
    **Coordinator desk** (`/coordinator`, open it from the admin header or on a second device and sign in with an admin account): during a live round it shows the current question with its answer key, the countdown and how many teams have locked in, with one big button that runs the loop **Reveal answer → Next question → repeat** (the last reveal reads *Finish round*). After the reveal it lists how many teams picked each option, the fastest finger, steals, eliminations and bingos so they can be announced. *Pause/Resume* sit next to the button, *Answers shown/hidden* masks every key if the screen is shared, and before a round starts (and during the self-paced Level 3) it shows the full question-and-answer sheet. The timers still apply: the question closes and the next one opens by themselves unless the round is paused. A tap on a stale screen (the timer moved the game on a moment earlier) is ignored by the server, so it can never skip a reveal.
 5. Repeat for Levels 2 and 3. After Level 4 ends, **Run qualification**: finalists are chosen and announced. You can change the number of finalists, or reopen qualification before Level 5 starts. Level 5 starting **freezes** qualification.
+
+   **Advancement (round cut-offs).** The Event tab has one row per round: how many teams enter it and how many carry on after it. Put a number in the box for Level 1, 2 or 3 to keep only that many teams (top of the leaderboard, same tie-breakers as everywhere else); leave it empty to keep everyone. The box on the Level 4 row is the finalist count. Example for 20 teams: keep 15 after Level 1, 10 after Level 2, 8 after Level 3, 5 finalists → Level 5 (the form shows the field size, `20 → 15 → 10 → 8 → 5`). Rules:
+   * The cut is applied **the moment the round ends**. The projector shows "N teams move on / M are out" and puts an **Out · L1** badge next to cut teams, phones tell each team whether it is through, and the Control tab lists who is out.
+   * Cut teams sit out every later round (they can still watch and see the leaderboard) and rank below every team that got further, the earlier the cut the lower.
+   * Until you **Prepare** the next round the cut follows the leaderboard: a score correction or a different number moves the line at once. After that it is final. If two teams are tied across the line the Control tab warns you; settle it with a score adjustment.
+   * Each cut must keep the same number of teams as the cut before it, or fewer (the form explains it and the server refuses it otherwise). More finalists than teams left simply qualifies everyone who is left.
 6. **Prepare/Start Level 5** (only finalists can play), **End round**, then **Finish event & show winners**: the projector shows the podium and champion.
 7. **Leaderboard tab → Export CSV.** Manual score corrections (with a mandatory reason) live in the same tab and appear in the audit log.
 
@@ -132,7 +138,7 @@ server/
   game/    pure logic: normalize, scoring, timer, stateMachine, ranking, liveRules, bingo   (unit tested)
   games/   one module per game format: quiz.ts (Level 3), live.ts (Levels 1, 2, 4 and 5: phase machine,
            scoring resolution, bingo card marking, host controls, views), index.ts (dispatches by round kind)
-  engine/  context (db, clock, audit), events (state machine + rounds), teams,
+  engine/  context (db, clock, audit), events (state machine + rounds), teams, cutoff (per-round cut-offs),
            admin (adjustments, config, CSV), standings, views (per-audience snapshots)
   http/    express app, auth (scrypt), middleware (CSRF, origin, rate limit), schemas (zod)
   realtime/ socket.io auth, coalesced broadcasts, ticker
@@ -155,7 +161,7 @@ Extra guards live in the engine: Level 5 can only be prepared from QUALIFICATION
 
 **Real-time contract** (`shared/contract.ts`). Server → client: `state:public` (projector + phones: no answers, no private data), `team:state` (only that team's room), `admin:state` (admin room, includes answer keys), `timer:sync`, `announce`, `session:ended`. Client → server (with acks): `answer:submit`, `hint:request`. Sockets authenticate in the handshake (`display` = public/read-only; `team` and `admin` require their HttpOnly cookie) and every handler re-checks the live session. Admin *commands* use authenticated REST (`/api/admin/*`) so they get CSRF protection and are trivially testable; the same submission service backs both `POST /api/team/answer` and the socket event, and a phone falls back to HTTP with the *same request id* if the socket acknowledgement times out. Broadcasts are coalesced (60 ms) so a burst of 20 answers produces one snapshot per audience.
 
-**Database** (`server/db/migrations.ts`, SQLite, WAL, foreign keys on): `events`, `admin_users`, `admin_sessions`, `rounds`, `challenges` (the ordered questions of every round; Tech Faces rows carry an `image` path), `teams`, `team_sessions`, `team_stage_progress` (quiz position), `live_team_state` (streak, lives, Double Down), `live_question_log`, `hints_used`, `answer_submissions`, `score_ledger`, `event_state_history`, `audit_logs`, `leaderboard_snapshots` (official standings written when each round ends and when the event completes). Integrity is enforced by the database itself: unique room PIN, partial unique index on active team names, unique `(team, request_id)`, partial unique index allowing only one *correct* submission per team and challenge (live questions also enforce one locked answer in code), and a unique `idempotency_key` on every ledger row. **Scores are never stored; they are `SUM(score_ledger.points)`.** All timestamps are UTC (ISO text, plus epoch ms for timing).
+**Database** (`server/db/migrations.ts`, SQLite, WAL, foreign keys on): `events`, `admin_users`, `admin_sessions`, `rounds`, `challenges` (the ordered questions of every round; Tech Faces rows carry an `image` path), `teams` (`qualified` = finalist, `out_level` = the level after which the host cut the team), `team_sessions`, `team_stage_progress` (quiz position), `live_team_state` (streak, lives, Double Down), `live_question_log`, `hints_used`, `answer_submissions`, `score_ledger`, `event_state_history`, `audit_logs`, `leaderboard_snapshots` (official standings written when each round ends and when the event completes). Integrity is enforced by the database itself: unique room PIN, partial unique index on active team names, unique `(team, request_id)`, partial unique index allowing only one *correct* submission per team and challenge (live questions also enforce one locked answer in code), and a unique `idempotency_key` on every ledger row. **Scores are never stored; they are `SUM(score_ledger.points)`.** All timestamps are UTC (ISO text, plus epoch ms for timing).
 
 **Main HTTP endpoints:** `POST /api/team/join|link|answer|hint|logout`, `GET /api/team/me`, `GET /api/public/state|event`, `POST /api/admin/login|logout`, `GET /api/admin/state|export.csv`, `POST /api/admin/event|event/reset|event/complete|registration/*|round/*|qualification/open|teams/:id/status|teams/:id/score`, `PATCH /api/admin/event|round/:level/config|challenges/:id`.
 
@@ -172,11 +178,11 @@ Extra guards live in the engine: Level 5 can only be prepared from QUALIFICATION
 
 ```bash
 npm run typecheck && npm run lint
-npm test                 # 136 tests: 49 unit + 87 integration
-npm run build && npm run test:e2e   # 3 Playwright journeys in Chromium
+npm test                 # 165 tests: 54 unit + 111 integration
+npm run build && npm run test:e2e   # 8 Playwright tests in Chromium
 ```
 
-Last full run on macOS (Node 26.5): **136/136 Vitest tests pass, 3/3 Playwright tests pass, typecheck and lint clean.**
+Last full run on macOS (Node 26.5): **165/165 Vitest tests pass, 8/8 Playwright tests pass, typecheck and lint clean.**
 
 * **Unit** (`tests/unit`): normalisation, alternatives, numeric parsing, speed bonus, config validation, timer pause/resume/deadline, ranking and every tie-break step, finalist selection, state machine, **every live scoring rule** (speed, fastest finger, streaks, Double Down, lives, steals, elimination, sudden-death protection) the **Tech Bingo rules** (10 lines on a 4x4 card, per-team shuffles, line detection) and the seeded tech answer keys.
 * **Integration** (`tests/integration`, real HTTP server + Socket.IO + SQLite): admin auth/CSRF/origin/logout/rate limit; socket authorisation; no answer-key leakage; registration limits, duplicate and near-duplicate names, concurrent joins (26 → exactly 20), registration closing mid-join; Level 3 (Quick Brain) scoring, **Skip**, hints, retries, duplicates, concurrent submissions, deadline (inclusive), ticker expiry, repeated pause/resume; **Tech Faces and Tech Bingo** (pictures on the public state, hidden-until-reveal marks, per-team cards, lines and blackout paid exactly once, voided calls), **Reel Rush and Final Showdown** (hidden-until-reveal scoring, early close, Double Down, streaks, host advance/skip, pause freezing the question timer, lives/elimination/steals/survivor bonus, restart mid-question, sockets); upgrading a version-1 database in place (including the new round kinds and ledger rows); qualification, freezing and reopening, tie at the cutoff, finalist-only Level 5, podium, CSV and ledger = snapshot = displayed totals; admin adjustments, reset, audit log; DB write failure rolls back and the same request id can be retried; server restart mid-round (paused, remaining time intact), restart after completion; 20 simultaneous socket submissions.
@@ -202,7 +208,7 @@ It registers 20 teams, connects 20 sockets plus a projector, and fires all 20 an
 
 * One active event at a time (previous events are archived in the database, not browsable in the UI).
 * Question/answer text is seeded from `server/content/` (`faces.ts`, `bingo.ts`, `quiz.ts`, `lightning.ts`, `showdown.ts`); the dashboard edits points, hints and scoring but not prompts or answer keys. To change content, edit those files, `npm run build`, restart and create a new event. **An event created by an earlier version (three Kerala-film levels) keeps its old rounds and levels; create a new event to get the five tech rounds.** Events created by the oldest version (with the puzzle rounds) cannot be started.
-* Levels are fixed at 1 → 2 → 3 → 4 → qualification → 5, with a 20-team cap; qualification happens after Level 4.
+* Levels are fixed at 1 → 2 → 3 → 4 → qualification → 5, with a 20-team cap (that is what the projector layout is tested for). Cut-offs can be set after Levels 1-3; the finalist qualification always happens after Level 4.
 * Level 3 is self-paced per team, so the projector shows instructions, progress and standings rather than a shared question; Levels 1, 2, 4 and 5 are live and fully shown on the projector.
 * Tech Faces photos are Commons images (see §5a). Tech Bingo needs exactly 16 tiles and one call per tile; the card is 4x4 and not configurable.
 * After a server restart a running round always returns *paused* and needs a host *Resume*. The remaining time is accurate to the 1 s heartbeat.

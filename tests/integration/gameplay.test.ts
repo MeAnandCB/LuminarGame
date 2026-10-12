@@ -303,7 +303,7 @@ describe('qualification and finalisation', () => {
     const csv = await admin.get('/api/admin/export.csv');
     expect(csv.status).toBe(200);
     const lines = csv.text.replace('\ufeff', '').trim().split('\r\n');
-    expect(lines[0]).toBe('Rank,Team,Player 1,Player 2,Level 1 points,Level 2 points,Level 3 points,Level 4 points,Level 5 points,Unassigned adjustments,Total,Challenges solved,Finalist,Tied on all criteria');
+    expect(lines[0]).toBe('Rank,Team,Player 1,Player 2,Level 1 points,Level 2 points,Level 3 points,Level 4 points,Level 5 points,Unassigned adjustments,Total,Challenges solved,Finalist,Out after level,Tied on all criteria');
     expect(lines).toHaveLength(8);
     for (const row of end.leaderboard) {
       const cells = lines.find((l) => l.split(',')[1] === row.name)!.split(',');

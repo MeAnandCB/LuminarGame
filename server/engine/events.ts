@@ -7,8 +7,10 @@ import { initLive, liveAdvance, onRoundEnd } from '../games/live.js';
 import { pauseTimer, resumeTimer, startTimer } from '../game/timer.js';
 import { AppError, type ChallengeRow, type Ctx, type EventRow, type RoundRow } from './context.js';
 import { clearAttention } from './attention.js';
+import { applyCutoff, cutoffLocked, cutoffSummary } from './cutoff.js';
 import { computeStandings, writeSnapshot } from './standings.js';
-import type { EventSettings, EventState } from '../../shared/types.js';
+import { advancementProblem } from '../../shared/advancement.js';
+import { CUTOFF_LEVELS, type EventSettings, type EventState } from '../../shared/types.js';
 
 export const QUALIFY_AFTER_LEVEL = 4;
 export const FINAL_LEVEL = 5;
@@ -68,10 +70,19 @@ export function updateEvent(ctx: Ctx, actor: string, patch: { name?: string; pin
       const next = eventSettingsSchema.parse({ ...cur, ...patch.settings });
       if ((next.maxTeams !== cur.maxTeams || next.autoApprove !== cur.autoApprove) && !early) throw new AppError(409, 'LOCKED', 'Capacity and approval mode can only change before the first round.');
       if (next.finalists !== cur.finalists && ev.qualification_frozen) throw new AppError(409, 'LOCKED', 'Qualification is frozen. Reopen it first.');
+      const problem = advancementProblem(next);
+      if (problem) throw new AppError(400, 'BAD_ADVANCEMENT', problem);
+      const changedCuts = CUTOFF_LEVELS.filter((_, i) => next.advance[i] !== cur.advance[i]) as number[];
+      for (const level of changedCuts) {
+        if (cutoffLocked(ctx, ev, level)) throw new AppError(409, 'LOCKED', `The cut after Level ${level} has already been applied.`);
+      }
       const active = ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM teams WHERE event_id = ? AND status IN ('pending','approved')", ev.id)!.n;
       if (next.maxTeams < active) throw new AppError(409, 'CAPACITY', `${active} teams are already registered; capacity cannot go below that.`);
       ctx.db.run('UPDATE events SET settings = ? WHERE id = ?', JSON.stringify(next), ev.id);
       if (next.finalists !== cur.finalists && ev.state === 'QUALIFICATION') recomputeQualification(ctx, ctx.event(ev.id));
+      // A round that just ended keeps its cut live until the next one is prepared, so a new number takes effect at once.
+      const justEnded = ev.state === 'ROUND_ENDED' ? ctx.currentRound(ev) : undefined;
+      if (justEnded && changedCuts.includes(justEnded.level)) applyCutoff(ctx, ev, justEnded.level, actor);
     }
     ctx.db.run('UPDATE events SET updated_at = ? WHERE id = ?', ctx.nowIso(), ev.id);
     ctx.audit(ev.id, actor, 'event.update', patch as Record<string, unknown>);
@@ -250,10 +261,14 @@ export function endRound(ctx: Ctx, actor: string, reason = 'ended by host'): voi
     ctx.db.run("UPDATE rounds SET status='ended', ended_at=?, deadline_at=NULL, remaining_ms=0, live_phase=NULL WHERE id=?", ctx.clock.now(), r.id);
     ctx.setState(ev, 'ROUND_ENDED', actor, reason);
     ctx.audit(ev.id, actor, 'round.end', { level: r.level, reason });
+    applyCutoff(ctx, ev, r.level, actor); // no-op unless the host set a cut-off for this level
     ended = r;
   });
-  writeSnapshot(ctx, ctx.event(ev.id), `round:${ended!.level}`, ended);
-  ctx.emit({ teams: 'all', announce: { kind: 'round_ended', text: `${ended!.name} is over.` } });
+  const fresh = ctx.event(ev.id);
+  writeSnapshot(ctx, fresh, `round:${ended!.level}`, ended);
+  const cut = cutoffSummary(ctx, fresh, ended);
+  const verdict = cut ? ` ${cut.kept} team${cut.kept === 1 ? '' : 's'} move${cut.kept === 1 ? 's' : ''} on to Level ${cut.afterLevel + 1}; ${cut.out} ${cut.out === 1 ? 'is' : 'are'} out.` : '';
+  ctx.emit({ teams: 'all', announce: { kind: 'round_ended', text: `${ended!.name} is over.${verdict}` } });
 }
 
 export function revealAnswers(ctx: Ctx, actor: string, level: number, reveal: boolean): void {
@@ -270,8 +285,8 @@ export function revealAnswers(ctx: Ctx, actor: string, level: number, reveal: bo
 
 export function recomputeQualification(ctx: Ctx, ev: EventRow): number[] {
   const finalists = ctx.settings(ev).finalists;
-  const standings = computeStandings(ctx, ev);
-  // Ranking before the final level has no tiers, so the top N by the documented tie-break win.
+  // Teams the host cut after an earlier level cannot qualify; among the rest the top N by the documented tie-break win.
+  const standings = computeStandings(ctx, ev).filter((s) => s.outLevel === null);
   const chosen = standings.slice(0, finalists).map((s) => s.teamId);
   ctx.db.tx(() => {
     ctx.db.run('UPDATE teams SET qualified = 0 WHERE event_id = ?', ev.id);

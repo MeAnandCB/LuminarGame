@@ -1,15 +1,27 @@
 import { rankTeams, type Ranked } from '../game/ranking.js';
 import { isLive } from '../game/scoring.js';
-import type { LeaderboardRow } from '../../shared/types.js';
+import { CUTOFF_LEVELS, type LeaderboardRow } from '../../shared/types.js';
 import type { Ctx, EventRow, RoundRow } from './context.js';
 
 export interface Standing extends Ranked {
+  /** Level after which the host cut the team; null while it is still in. */
+  outLevel: number | null;
   roundScore: number;
   progress: number;
   progressTotal: number;
   lives: number | null;
   streak: number;
   eliminated: boolean;
+}
+
+/**
+ * Ranking tier (see game/ranking.ts). Teams cut by the host rank below everyone who got further, the earlier the cut the lower.
+ * Non-finalists rank last once the Final Showdown has frozen qualification; a finalist knocked out of lives ranks below every team still standing, whatever the points.
+ */
+function tierOf(team: { qualified: number; out_level: number | null }, frozen: boolean, showdownOut: boolean): number {
+  if (team.out_level !== null) return 3 + (Math.max(...CUTOFF_LEVELS) - team.out_level);
+  if (frozen && !team.qualified) return 2;
+  return showdownOut ? 1 : 0;
 }
 
 /**
@@ -26,13 +38,14 @@ export function computeStandings(ctx: Ctx, ev: EventRow): Standing[] {
     id: number;
     name: string;
     qualified: number;
+    out_level: number | null;
     total: number;
     focus: number;
     solved: number;
     last_solve: number | null;
     round_score: number;
   }>(
-    `SELECT t.id, t.name, t.qualified,
+    `SELECT t.id, t.name, t.qualified, t.out_level,
        COALESCE((SELECT SUM(l.points) FROM score_ledger l WHERE l.team_id = t.id), 0) AS total,
        COALESCE((SELECT SUM(l.points) FROM score_ledger l JOIN rounds r ON r.id = l.round_id WHERE l.team_id = t.id AND r.level = ?), 0) AS focus,
        (SELECT COUNT(*) FROM score_ledger l WHERE l.team_id = t.id AND l.kind = 'answer') AS solved,
@@ -61,8 +74,7 @@ export function computeStandings(ctx: Ctx, ev: EventRow): Standing[] {
     rows.map((r) => ({
       teamId: r.id,
       name: r.name,
-      // Non-finalists last; in the Final Showdown a finalist knocked out of lives ranks below every team still standing, whatever the points.
-      tier: frozen && !r.qualified ? 2 : liveState.get(r.id)?.eliminated === 1 ? 1 : 0,
+      tier: tierOf(r, frozen, liveState.get(r.id)?.eliminated === 1),
       total: r.total,
       focus: r.focus,
       solved: r.solved,
@@ -72,6 +84,7 @@ export function computeStandings(ctx: Ctx, ev: EventRow): Standing[] {
   const byId = new Map(rows.map((r) => [r.id, r]));
   return ranked.map((r) => ({
     ...r,
+    outLevel: byId.get(r.teamId)!.out_level,
     roundScore: byId.get(r.teamId)!.round_score,
     progress: totals.get(r.teamId) ?? 0,
     progressTotal: current && isLive(current.kind) ? 0 : progressTotal,
@@ -99,6 +112,7 @@ export function toRows(ctx: Ctx, ev: EventRow, standings: Standing[]): Leaderboa
     progressTotal: s.progressTotal,
     connected: ctx.isConnected(s.teamId),
     qualified: showQual ? (qualified.get(s.teamId) ?? false) : null,
+    outAfter: s.outLevel,
     tied: s.tied,
     lives: s.lives,
     streak: s.streak,

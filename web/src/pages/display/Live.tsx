@@ -1,5 +1,5 @@
 import type { LeaderboardRow, LiveOption, LivePublic, PublicState } from '../../../../shared/types';
-import { Leaderboard } from '../../components/ui';
+import { Leaderboard, playingRows } from '../../components/ui';
 import { Emblem, LEVELS } from '../../components/Backdrop';
 import { FaceImage } from '../../components/FaceImage';
 import { BingoBoard } from '../../components/BingoCard';
@@ -46,7 +46,7 @@ export function LiveView({ pub, now }: { pub: PublicState; now: number }) {
   const round = pub.round!;
   const paused = pub.event!.state === 'ROUND_PAUSED';
   const r = q.reveal;
-  const rows: LeaderboardRow[] = round.kind === 'showdown' ? pub.leaderboard.filter((x) => x.qualified !== false) : pub.leaderboard;
+  const rows: LeaderboardRow[] = playingRows(pub.leaderboard, round);
   const half = Math.ceil(rows.length / 2);
   const split = rows.length > 9;
   const isBingo = round.kind === 'bingo' && !!q.bingo;

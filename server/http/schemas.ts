@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MAX_ANSWER_LENGTH } from '../../shared/contract.js';
+import { CUTOFF_LEVELS } from '../../shared/types.js';
 
 const clean = (s: string) => s.normalize('NFKC').replace(/\s+/g, ' ').trim();
 const label = (min: number, max: number) =>
@@ -51,6 +52,7 @@ export const updateEventSchema = z.object({
       maxTeams: z.number().int().min(1).max(20),
       autoApprove: z.boolean(),
       finalists: z.number().int().min(1).max(20),
+      advance: z.array(z.number().int().min(1).max(20).nullable()).length(CUTOFF_LEVELS.length),
       liveScores: z.boolean(),
     })
     .partial()

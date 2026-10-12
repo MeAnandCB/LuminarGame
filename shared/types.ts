@@ -65,10 +65,16 @@ export interface RoundConfig {
   blackoutBonus: number;
 }
 
+/** Levels after which the host may cut the field. The cut after Level 4 is the finalist qualification (`finalists`). */
+export const CUTOFF_LEVELS = [1, 2, 3] as const;
+
 export interface EventSettings {
   maxTeams: number;
   autoApprove: boolean;
+  /** Teams that reach the Final Showdown (chosen after Level 4). */
   finalists: number;
+  /** Teams that carry on after Level 1, 2 and 3 (index 0 = after Level 1). null = nobody is cut. */
+  advance: (number | null)[];
   /** Show scores/ranks on projector and phones while a round is running. */
   liveScores: boolean;
 }
@@ -84,6 +90,8 @@ export interface LeaderboardRow {
   progressTotal: number;
   connected: boolean;
   qualified: boolean | null;
+  /** Level after which the host cut this team (it plays no later round); null while it is still in. */
+  outAfter: number | null;
   tied: boolean;
   /** Live games only. */
   lives: number | null;
@@ -188,6 +196,8 @@ export interface PublicState {
   scoresHidden: boolean;
   recent: ScoreChange[];
   finalists: { teamId: number; name: string }[];
+  /** Right after a round ends with a cut-off: how many teams carry on and how many were cut. */
+  cutoff: { afterLevel: number; kept: number; out: number } | null;
   podium: LeaderboardRow[] | null;
   reveal: RevealedItem[] | null;
   live: LivePublic | null;
@@ -255,6 +265,7 @@ export interface TeamState {
   rank: number | null;
   rankHidden: boolean;
   qualified: boolean | null;
+  outAfter: number | null;
   eligible: boolean;
   progress: { position: number; total: number; finished: boolean } | null;
   challenge: TeamChallenge | null;
@@ -309,6 +320,7 @@ export interface AdminTeam {
   devices: number;
   total: number;
   qualified: boolean;
+  outAfter: number | null;
   duplicateName: boolean;
   createdAt: string;
 }

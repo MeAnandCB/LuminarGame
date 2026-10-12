@@ -4,6 +4,7 @@ import { speedBonus, parseRoundConfig, DEFAULT_ROUND_CONFIG } from '../../server
 import { acceptsSubmissions, elapsedClock, pauseTimer, remainingAt, resumeTimer, startTimer } from '../../server/game/timer.js';
 import { rankTeams, selectFinalists, type RankInput } from '../../server/game/ranking.js';
 import { InvalidTransitionError, TRANSITIONS, assertTransition, canTransition } from '../../server/game/stateMachine.js';
+import { advancementProblem } from '../../shared/advancement.js';
 import { EVENT_STATES } from '../../shared/types.js';
 
 describe('answer normalisation', () => {
@@ -126,6 +127,15 @@ describe('ranking and tie-breaking', () => {
     ]);
     expect(r.map((x) => x.teamId)).toEqual([2, 1, 3]);
   });
+  it('teams cut by the host rank below everyone who got further, the earlier the cut the lower, whatever their points', () => {
+    const r = rankTeams([
+      base({ teamId: 1, total: 9000, tier: 5 }), // cut after Level 1
+      base({ teamId: 2, total: 4000, tier: 4 }), // cut after Level 2
+      base({ teamId: 3, total: 100, tier: 0 }), // still in
+      base({ teamId: 4, total: 8000, tier: 3 }), // cut after Level 3
+    ]);
+    expect(r.map((x) => x.teamId)).toEqual([3, 4, 2, 1]);
+  });
   it('selects the top N finalists, including fewer teams than N', () => {
     const r = rankTeams([base({ teamId: 1, total: 3 }), base({ teamId: 2, total: 2 }), base({ teamId: 3, total: 1 })]);
     expect(selectFinalists(r, 2)).toEqual([1, 2]);
@@ -134,6 +144,23 @@ describe('ranking and tie-breaking', () => {
   it('breaks a tie at the qualification cutoff by the documented rule', () => {
     const r = rankTeams([base({ teamId: 1, total: 100, solved: 3, lastSolveAt: 9 }), base({ teamId: 2, total: 100, solved: 3, lastSolveAt: 4 })]);
     expect(selectFinalists(r, 1)).toEqual([2]);
+  });
+});
+
+describe('advancement plan', () => {
+  const plan = (advance: (number | null)[]) => advancementProblem({ advance });
+  it('accepts no cut-offs at all', () => {
+    expect(plan([null, null, null])).toBeNull();
+  });
+  it('accepts cuts that narrow the field and skips rounds without a cut', () => {
+    expect(plan([15, 10, 8])).toBeNull();
+    expect(plan([null, 10, null])).toBeNull();
+    expect(plan([10, null, 10])).toBeNull();
+    expect(plan([10, 10, 10])).toBeNull();
+  });
+  it('rejects a cut that keeps more teams than an earlier cut', () => {
+    expect(plan([8, 10, null])).toMatch(/after Level 1 keeps 8, so the cut after Level 2 cannot keep 10/);
+    expect(plan([8, null, 9])).toMatch(/after Level 1 keeps 8, so the cut after Level 3 cannot keep 9/);
   });
 });
 

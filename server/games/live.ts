@@ -16,7 +16,7 @@ import { elapsedClock } from '../game/timer.js';
 import { AppError, type ChallengeRow, type Ctx, type EventRow, type RoundRow, type TeamRow } from '../engine/context.js';
 import { endRound } from '../engine/events.js';
 import type { AnswerResult, BingoPublic, LiveOption, LivePublic, LiveReveal, RoundConfig, TeamBingo, TeamLive } from '../../shared/types.js';
-import { award, eligibleForRound, result, type SubmitInput } from './shared.js';
+import { award, eligibilityProblem, result, type SubmitInput } from './shared.js';
 
 interface LiveTeamRow {
   team_id: number;
@@ -72,7 +72,7 @@ function alive(ctx: Ctx, round: RoundRow): LiveTeamRow[] {
 
 export function initLive(ctx: Ctx, ev: EventRow, round: RoundRow): void {
   const cfg = ctx.roundConfig(round);
-  const teams = ctx.db.all<{ id: number }>(`SELECT id FROM teams WHERE event_id = ? AND status = 'approved' ${round.kind === 'showdown' ? 'AND qualified = 1' : ''}`, ev.id);
+  const teams = ctx.db.all<{ id: number }>(`SELECT id FROM teams WHERE event_id = ? AND status = 'approved' AND (out_level IS NULL OR out_level >= ?) ${round.kind === 'showdown' ? 'AND qualified = 1' : ''}`, ev.id, round.level);
   ctx.db.run('DELETE FROM live_team_state WHERE round_id = ?', round.id);
   // A starting round has no history. Without this, a stale "resolved" row from an earlier run silently skips scoring for that question.
   ctx.db.run('DELETE FROM live_question_log WHERE round_id = ?', round.id);
@@ -236,7 +236,8 @@ export function submitLive(ctx: Ctx, input: SubmitInput): AnswerResult {
     if (team.status !== 'approved') throw new AppError(403, 'NOT_APPROVED', 'Your team has not been approved.');
     const round = ctx.currentRound(ev);
     if (!round || !isLive(round.kind) || !['ROUND_RUNNING', 'ROUND_PAUSED', 'ROUND_ENDED'].includes(ev.state)) throw new AppError(409, 'NOT_RUNNING', 'No round is running right now.');
-    if (!eligibleForRound(team, round)) throw new AppError(403, 'NOT_ELIGIBLE', 'Only finalists can play this round.');
+    const notEligible = eligibilityProblem(team, round);
+    if (notEligible) throw new AppError(403, 'NOT_ELIGIBLE', notEligible);
     const st = ctx.db.get<LiveTeamRow>('SELECT * FROM live_team_state WHERE team_id = ? AND round_id = ?', team.id, round.id);
     if (!st) throw new AppError(403, 'NOT_ELIGIBLE', 'Your team is not part of this round.');
     if (st.eliminated) throw new AppError(403, 'ELIMINATED', 'Your team has been eliminated. Cheer on the others!');

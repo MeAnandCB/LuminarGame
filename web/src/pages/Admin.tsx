@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import type { AdminChallenge, AdminRound, AdminState, AdminTeam, EventSettings, RoundConfig } from '../../../shared/types';
+import { CUTOFF_LEVELS, type AdminChallenge, type AdminRound, type AdminState, type AdminTeam, type EventSettings, type RoundConfig } from '../../../shared/types';
+import { advancementProblem } from '../../../shared/advancement';
 import { AWAY_GRACE_MS } from '../../../shared/contract';
 import { ApiFailure, api, errMsg } from '../lib/api';
 import { AdminGate } from '../components/AdminGate';
@@ -257,6 +258,7 @@ function Control({ s, now, busy, post, confirm }: { s: AdminState; now: number; 
             </button>
           </div>
         )}
+        {s.event.state === 'ROUND_ENDED' && round && <CutoffControl s={s} level={round.level} />}
         {s.event.state === 'QUALIFICATION' && (
           <FinalistsControl s={s} />
         )}
@@ -276,6 +278,21 @@ function Control({ s, now, busy, post, confirm }: { s: AdminState; now: number; 
           <Leaderboard rows={s.leaderboard.slice(0, 8)} compact provisional={s.event.state === 'ROUND_RUNNING' || s.event.state === 'ROUND_PAUSED'} showProgress />
         </section>
       </aside>
+    </div>
+  );
+}
+
+function CutoffControl({ s, level }: { s: AdminState; level: number }) {
+  const out = s.leaderboard.filter((r) => r.outAfter === level);
+  if (out.length === 0) return null;
+  const through = s.leaderboard.filter((r) => r.outAfter === null);
+  const edge = [through[through.length - 1], out[0]];
+  return (
+    <div className="rounded-xl border border-ok p-3" data-testid="cutoff-panel">
+      <h3 className="font-bold text-ok">Cut-off after Level {level}: {through.length} team{through.length === 1 ? '' : 's'} move on, {out.length} out</h3>
+      <p className="text-sm">Out: {out.map((r) => r.name).join(', ')}</p>
+      {edge.every((r) => r?.tied) && <p className="mt-1 text-sm text-warn">⚠ The last team in and the first team out are tied on every criterion and were ordered by team id. Adjust a score in the Leaderboard tab to decide it.</p>}
+      <p className="mt-1 text-xs text-muted">The list follows the leaderboard: change the number in the Event tab or correct a score and it updates immediately, until you prepare the next round.</p>
     </div>
   );
 }
@@ -304,7 +321,7 @@ function Teams({ s, now, busy, post, confirm }: { s: AdminState; now: number; bu
           <td className="px-2 py-2 font-semibold">{t.name}{t.duplicateName && <span className="badge badge-warn ml-2">similar name</span>}</td>
           <td className="px-2 py-2 text-sm">{t.players.join(', ')}</td>
           <td className="px-2 py-2 mono text-sm">{t.code}</td>
-          <td className="px-2 py-2"><span className={`badge ${t.status === 'approved' ? 'badge-ok' : t.status === 'pending' ? 'badge-warn' : 'badge-bad'}`}>{t.status}</span></td>
+          <td className="px-2 py-2"><span className={`badge ${t.status === 'approved' ? 'badge-ok' : t.status === 'pending' ? 'badge-warn' : 'badge-bad'}`}>{t.status}</span>{t.outAfter !== null && <span className="badge ml-1" title={`Cut after Level ${t.outAfter}`}>out · L{t.outAfter}</span>}</td>
           <td className="px-2 py-2 text-sm">
             {!t.connected ? (t.status === 'approved' ? <span className="badge badge-bad">◌ offline</span> : '◌ offline') : awayMs(t, now) !== null ? <span className="badge badge-warn">👀 away {awaySecs(awayMs(t, now)!)}s</span> : '● online'} · {t.devices} device{t.devices === 1 ? '' : 's'}
           </td>
@@ -362,7 +379,10 @@ function Rounds({ s, act }: { s: AdminState; act: <T>(fn: () => Promise<T>) => P
         <section key={r.id} className="panel p-4" aria-labelledby={`r${r.level}`}>
           <button className="flex w-full items-center justify-between text-left" aria-expanded={open === r.level} onClick={() => setOpen(open === r.level ? 0 : r.level)}>
             <h2 id={`r${r.level}`} className="text-lg font-black">{r.name}</h2>
-            <span className="badge">{r.status}</span>
+            <span className="flex items-center gap-2">
+              {s.event.settings.advance[r.level - 1] != null && <span className="badge badge-ok">top {s.event.settings.advance[r.level - 1]} move on</span>}
+              <span className="badge">{r.status}</span>
+            </span>
           </button>
           {open === r.level && <RoundEditor r={r} keys={keys} act={act} />}
         </section>
@@ -525,6 +545,74 @@ function Audit({ s }: { s: AdminState }) {
   );
 }
 
+const QUALIFY_LEVEL = Math.max(...CUTOFF_LEVELS) + 1;
+
+/** One row per round: how many teams enter it and how many carry on after it. */
+function Advancement({ s, set, setSet }: { s: AdminState; set: EventSettings; setSet: (v: EventSettings) => void }) {
+  const problem = advancementProblem(set);
+  const registered = s.counts.teams;
+  // The cut after a round is final once the next round is prepared; the finalist count freezes when the Final Showdown starts.
+  const locked = (r: AdminRound) => r.status === 'ended' && !(s.event.state === 'ROUND_ENDED' && s.event.currentRoundId === r.id);
+  let playing = registered > 0 ? registered : set.maxTeams;
+  const path = [playing];
+  const rows = [...s.rounds]
+    .sort((a, b) => a.level - b.level)
+    .map((r) => {
+      const entering = playing;
+      const cut = (CUTOFF_LEVELS as readonly number[]).includes(r.level);
+      const keep = cut ? set.advance[r.level - 1] ?? null : r.level === QUALIFY_LEVEL ? set.finalists : null;
+      playing = keep === null ? entering : Math.min(entering, keep);
+      if (r.level < s.rounds.length) path.push(playing);
+      return { r, entering, cut, keep };
+    });
+  const setKeep = (level: number, value: string) => {
+    const advance = [...set.advance];
+    advance[level - 1] = value === '' ? null : Number(value);
+    setSet({ ...set, advance });
+  };
+  return (
+    <fieldset className="rounded-xl border border-line p-3" data-testid="advancement">
+      <legend className="px-1 font-bold">Advancement: who keeps playing</legend>
+      <p className="mb-2 text-sm text-muted">
+        When a round ends, only the top teams on the leaderboard play the next one; the rest are out. Leave a box empty to keep everyone. A cut can be changed until you prepare the next round.
+        {registered === 0 && ' Counts assume a full house until teams register.'}
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[26rem] text-left text-sm">
+          <thead className="text-xs uppercase tracking-wider text-muted"><tr><th className="px-2">Round</th><th className="px-2">Teams in</th><th className="px-2">Keep the top…</th></tr></thead>
+          <tbody>
+            {rows.map(({ r, entering, cut, keep }) => (
+              <tr key={r.id} className="border-t border-line">
+                <td className="px-2 py-1.5 font-semibold">{r.name}</td>
+                <td className="tnum px-2 py-1.5">{entering}</td>
+                <td className="px-2 py-1.5">
+                  {cut || r.level === QUALIFY_LEVEL ? (
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="number" min={1} max={20} className="field !min-h-10 w-24" placeholder={cut ? 'All' : undefined}
+                        aria-label={r.level === QUALIFY_LEVEL ? 'Finalists advancing to the Final Showdown' : `Teams that keep playing after ${r.name}`}
+                        value={keep ?? ''} disabled={r.level === QUALIFY_LEVEL ? s.event.qualificationFrozen : locked(r)}
+                        onChange={(e) => (r.level === QUALIFY_LEVEL ? setSet({ ...set, finalists: e.target.value === '' ? NaN : Number(e.target.value) }) : setKeep(r.level, e.target.value))}
+                      />
+                      <span className="text-muted">
+                        {r.level === QUALIFY_LEVEL ? `finalists → Level 5${keep !== null && keep >= entering ? ` (only ${entering} left, so all qualify)` : ''}` : 'teams'}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="text-muted">finalists only</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-sm">Field size: <strong className="tnum">{path.join(' → ')}</strong></p>
+      {problem && <p role="alert" className="mt-1 text-sm text-bad">{problem}</p>}
+    </fieldset>
+  );
+}
+
 function EventTab({ s, act, confirm }: { s: AdminState; act: <T>(fn: () => Promise<T>) => Promise<T | undefined>; confirm: Ask }) {
   const [name, setName] = useState(s.event.name);
   const [pin, setPin] = useState(s.event.pin);
@@ -540,13 +628,11 @@ function EventTab({ s, act, confirm }: { s: AdminState; act: <T>(fn: () => Promi
         <h2 id="ev-h" className="text-xl font-black">Event settings</h2>
         <div><label className="lbl" htmlFor="ev-name">Event name</label><input id="ev-name" className="field" value={name} onChange={(e) => setName(e.target.value)} required minLength={2} maxLength={60} /></div>
         <div><label className="lbl" htmlFor="ev-pin">Room PIN (6 digits{early ? '' : ', locked after play begins'})</label><input id="ev-pin" className="field mono" pattern="\d{6}" maxLength={6} disabled={!early} value={pin} onChange={(e) => setPin(e.target.value)} /></div>
-        <div className="grid grid-cols-2 gap-3">
-          <NumField id="ev-max" label="Team capacity (max 20)" value={set.maxTeams} min={1} max={20} disabled={!early} onChange={(n) => setSet({ ...set, maxTeams: n })} />
-          <NumField id="ev-fin" label="Finalists advancing" value={set.finalists} min={1} max={20} disabled={s.event.qualificationFrozen} onChange={(n) => setSet({ ...set, finalists: n })} />
-        </div>
+        <NumField id="ev-max" label="Team capacity (max 20)" value={set.maxTeams} min={1} max={20} disabled={!early} onChange={(n) => setSet({ ...set, maxTeams: n })} />
+        <Advancement s={s} set={set} setSet={setSet} />
         <label className="flex items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={set.autoApprove} disabled={!early} onChange={(e) => setSet({ ...set, autoApprove: e.target.checked })} /> Auto-approve new teams</label>
         <label className="flex items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={set.liveScores} onChange={(e) => setSet({ ...set, liveScores: e.target.checked })} /> Show live scores during rounds (otherwise revealed when each round ends)</label>
-        <button className="btn btn-primary">Save settings</button>
+        <button className="btn btn-primary" disabled={!!advancementProblem(set)}>Save settings</button>
       </form>
       <section className="panel flex flex-col gap-4 border-bad/60 p-4" aria-labelledby="dz-h">
         <h2 id="dz-h" className="text-xl font-black text-bad">Danger zone</h2>

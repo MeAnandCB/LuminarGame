@@ -193,7 +193,7 @@ function ScoreStrip({ team }: { team: TeamState }) {
     <div className="grid grid-cols-3 gap-2 text-center" aria-label="Your standing">
       <Stat label="Points" value={String(team.score.total)} />
       <Stat label="Rank" value={team.rankHidden ? 'Hidden' : team.rank ? `#${team.rank}` : '–'} />
-      <Stat label="Status" value={team.qualified === null ? 'Playing' : team.qualified ? '✔ Finalist' : 'Not qualified'} small />
+      <Stat label="Status" value={team.outAfter !== null ? `Out after L${team.outAfter}` : team.qualified === null ? 'Playing' : team.qualified ? '✔ Finalist' : 'Not qualified'} small />
     </div>
   );
 }
@@ -239,7 +239,7 @@ function Screen({ team, pub, live, now }: { team: TeamState; pub: PublicState | 
   if (!team.eligible) {
     return (
       <Card title={round.name} icon="👀" level={round.level}>
-        <p>This round is for finalists only. Watch the big screen – you can still follow the leaderboard below.</p>
+        <p>{team.outAfter !== null ? `Your team was cut after Level ${team.outAfter}. Thank you for playing!` : 'This round is for finalists only.'} Watch the big screen – you can still follow the leaderboard below.</p>
         {pub && <div className="mt-4"><Leaderboard rows={pub.leaderboard} provisional={pub.provisional} hidden={pub.scoresHidden} highlightId={team.team.id} compact /></div>}
       </Card>
     );
@@ -458,6 +458,11 @@ function Between({ team, pub }: { team: TeamState; pub: PublicState | null }) {
     <>
       <Card title={`${round?.name ?? 'Round'} – finished`} icon="🏁" level={round?.level}>
         <p>Your round score: <strong className="tnum text-neon">{team.score.round}</strong> · total <strong className="tnum">{team.score.total}</strong></p>
+        {pub?.cutoff && round && pub.cutoff.afterLevel === round.level && (
+          team.outAfter === round.level
+            ? <p className="mt-3 text-xl font-bold" data-testid="cut-out">You did not make the cut for Level {round.level + 1} – thank you for playing!</p>
+            : <p className="mt-3 text-xl font-bold text-ok" data-testid="cut-through">✔ You move on to Level {round.level + 1}!</p>
+        )}
         <p className="mt-2 text-muted">Waiting for the host to continue to the next stage…</p>
       </Card>
       {team.history.length > 0 && (

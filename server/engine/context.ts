@@ -3,6 +3,7 @@ import type { Db } from '../db/connection.js';
 import type { Announcement } from '../../shared/contract.js';
 import type { EventSettings, EventState, RoundConfig, RoundKind, RoundStatus, TeamStatus } from '../../shared/types.js';
 import type { TimerState } from '../game/timer.js';
+import { DEFAULT_EVENT_SETTINGS } from '../game/scoring.js';
 
 export class AppError extends Error {
   constructor(
@@ -79,6 +80,8 @@ export interface TeamRow {
   team_code: string;
   status: TeamStatus;
   qualified: number;
+  /** Level after which the host cut this team; null while it is still in. */
+  out_level: number | null;
   created_at: string;
 }
 
@@ -182,7 +185,8 @@ export class Ctx {
   }
 
   settings(ev: EventRow): EventSettings {
-    return JSON.parse(ev.settings) as EventSettings;
+    // Events saved by an older version lack newer keys (e.g. `advance`); fill them from the defaults.
+    return { ...DEFAULT_EVENT_SETTINGS, ...(JSON.parse(ev.settings) as Partial<EventSettings>) };
   }
 
   roundConfig(r: RoundRow): RoundConfig {

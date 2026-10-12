@@ -41,10 +41,18 @@ export function result(requestId: string, outcome: AnswerOutcome, points: number
   return { requestId, outcome, points, message, advanced, ...(duplicate ? { duplicate: true } : {}) };
 }
 
-/** Level 3 (showdown) is for finalists only; everything else is open to every approved team. */
-export function eligibleForRound(team: TeamRow, round: RoundRow): boolean {
-  return team.status === 'approved' && (round.kind !== 'showdown' || team.qualified === 1);
+/**
+ * Why a team may not play a round, or null when it may. Teams the host cut after an earlier level sit out
+ * every later round, and the Final Showdown is for finalists only.
+ */
+export function eligibilityProblem(team: TeamRow, round: RoundRow): string | null {
+  if (team.status !== 'approved') return 'Your team has not been approved.';
+  if (team.out_level !== null && round.level > team.out_level) return `Your team was cut after Level ${team.out_level} and is not playing this round.`;
+  if (round.kind === 'showdown' && team.qualified !== 1) return 'Only finalists can play this round.';
+  return null;
 }
+
+export const eligibleForRound = (team: TeamRow, round: RoundRow): boolean => eligibilityProblem(team, round) === null;
 
 export interface SubmitInput {
   teamId: number;

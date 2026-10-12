@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { LeaderboardRow, PublicState } from '../../../shared/types';
 import { fmtClock, remaining, useLive, useServerNow } from '../lib/realtime';
 import { useOfflineTeams } from '../lib/offlineTeams';
-import { ConnBadge, Leaderboard, OfflineTeamsContext, QrImage, Spinner } from '../components/ui';
+import { ConnBadge, Leaderboard, OfflineTeamsContext, QrImage, Spinner, playingRows } from '../components/ui';
 import { LiveView } from './display/Live';
 import { Backdrop, Emblem, FINALE_LEVEL, LEVELS, LevelIntro, skinOf, themeFor } from '../components/Backdrop';
 
@@ -179,7 +179,7 @@ function RoundView({ pub, now }: { pub: PublicState; now: number }) {
   const paused = state === 'ROUND_PAUSED';
   const ended = state === 'ROUND_ENDED';
   const unit = 'questions';
-  const eligible = round.kind === 'showdown' ? pub.leaderboard.filter((r) => r.qualified) : pub.leaderboard;
+  const playing = playingRows(pub.leaderboard, round);
   return (
     <div className="grid flex-1 grid-cols-1 gap-[1.6vw] lg:grid-cols-[minmax(0,4fr)_minmax(0,7fr)]">
       <section className="flex flex-col gap-[0.8vw]">
@@ -197,9 +197,17 @@ function RoundView({ pub, now }: { pub: PublicState; now: number }) {
             {ended && "🏁 Time's up – round complete"}
           </p>
         </div>
-        <p className="panel p-[1vw] text-[0.8em] leading-snug text-muted">{round.instructions}</p>
+        {ended && pub.cutoff ? (
+          // Replaces the instructions once the round is over, so the column keeps the height the projector was designed for.
+          <div className="panel pop border-ok p-[1.2vw]" role="status" data-testid="cutoff-banner">
+            <p className="text-[1.3em] font-black text-ok">✔ {pub.cutoff.kept} team{pub.cutoff.kept === 1 ? '' : 's'} move on to Level {pub.cutoff.afterLevel + 1}</p>
+            <p className="text-[0.9em] text-muted">{pub.cutoff.out} team{pub.cutoff.out === 1 ? ' is' : 's are'} out after this round.</p>
+          </div>
+        ) : (
+          <p className="panel p-[1vw] text-[0.8em] leading-snug text-muted">{round.instructions}</p>
+        )}
         <div className="grid grid-cols-1 gap-[0.8vw] sm:grid-cols-3">
-          <Stat label="Teams online" value={`${pub.counts.connected}/${eligible.length}`} />
+          <Stat label="Teams online" value={`${playing.filter((r) => r.connected).length}/${playing.length}`} />
           <Stat label="Answers in" value={pub.counts.submissions} />
           <Stat label={`Finished all ${round.total} ${unit}`} value={pub.counts.finished} />
         </div>
@@ -220,7 +228,7 @@ function RoundView({ pub, now }: { pub: PublicState; now: number }) {
       <section className="flex flex-col gap-[1vw]">
         <h2 className="text-[1.5em] font-black">{pub.provisional ? 'Live leaderboard' : ended ? 'Round standings' : 'Leaderboard'}</h2>
         {pub.scoresHidden && <p className="rounded-lg border border-warn px-3 py-2 text-warn">Scores are hidden until the round ends.</p>}
-        <BoardColumns rows={round.kind === 'showdown' ? pub.leaderboard.filter((r) => r.qualified !== false) : pub.leaderboard} pub={pub} showProgress={!ended} />
+        <BoardColumns rows={ended && pub.cutoff ? pub.leaderboard : playing} pub={pub} showProgress={!ended} />
         {ended && pub.reveal && (
           <div className="panel p-[1.2vw]">
             <h3 className="mb-2 text-[1.1em] font-black text-[var(--accent)]">Answer key</h3>

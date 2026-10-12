@@ -345,4 +345,12 @@ CREATE INDEX idx_ledger_round ON score_ledger(round_id, team_id);
 ALTER TABLE challenges ADD COLUMN image TEXT;
 `,
   },
+  {
+    id: 4,
+    name: 'team_cutoffs',
+    sql: `
+-- teams: the level after which the host cut the team (it plays no later round); NULL while still in
+ALTER TABLE teams ADD COLUMN out_level INTEGER;
+`,
+  },
 ];
