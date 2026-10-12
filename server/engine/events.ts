@@ -6,6 +6,7 @@ import { DEFAULT_EVENT_SETTINGS, DEFAULT_ROUND_CONFIG, eventSettingsSchema, isLi
 import { initLive, liveAdvance, onRoundEnd } from '../games/live.js';
 import { pauseTimer, resumeTimer, startTimer } from '../game/timer.js';
 import { AppError, type ChallengeRow, type Ctx, type EventRow, type RoundRow } from './context.js';
+import { clearAttention } from './attention.js';
 import { computeStandings, writeSnapshot } from './standings.js';
 import type { EventSettings, EventState } from '../../shared/types.js';
 
@@ -98,6 +99,7 @@ export function resetEvent(ctx: Ctx, actor: string): EventRow {
     ctx.audit(ev.id, actor, 'event.reset', { teamsRemoved: kick.length, previousState: ev.state });
   });
   ctx.presence.clear();
+  clearAttention(ctx);
   ctx.emit({ kick, teams: 'all' });
   return ctx.event(ev.id);
 }

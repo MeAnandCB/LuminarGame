@@ -1,16 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AdminTeam } from '../../../shared/types';
 
-/** A team must stay offline this long before it counts, so a page reload or a Wi-Fi blip does not set off the alarm. */
-export const OFFLINE_GRACE_MS = 3000;
+/** A team must stay offline this long before it counts, so the second a phone takes to reload its page does not set off the alarm. */
+export const OFFLINE_GRACE_MS = 1000;
 
 /**
- * Approved teams that have been offline longer than the grace period.
+ * The teams (pass approved ones only) that have been offline longer than the grace period.
  * `onDropped` fires once per team the moment it newly counts as offline (use it for the beep).
  * Teams that are already offline when the first state arrives are listed but do not fire it, so reloading
- * the admin page never beeps.
+ * the admin page or the projector never beeps.
  */
-export function useOfflineTeams(teams: AdminTeam[] | null, watching: boolean, onDropped: () => void): AdminTeam[] {
+export function useOfflineTeams<T extends { id: number; connected: boolean }>(teams: T[] | null, watching: boolean, onDropped: () => void): T[] {
   const [confirmed, setConfirmed] = useState<ReadonlySet<number>>(() => new Set());
   const confirmedRef = useRef(new Set<number>());
   const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
@@ -21,7 +20,7 @@ export function useOfflineTeams(teams: AdminTeam[] | null, watching: boolean, on
     notify.current = onDropped;
   });
 
-  const offline = watching && teams ? teams.filter((t) => t.status === 'approved' && !t.connected) : [];
+  const offline = watching && teams ? teams.filter((t) => !t.connected) : [];
   const key = offline.map((t) => t.id).join(',');
   const loaded = teams !== null;
 

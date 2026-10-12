@@ -20,7 +20,12 @@ export const S2C = {
 export const C2S = {
   submitAnswer: 'answer:submit',
   requestHint: 'hint:request',
+  /** Fire-and-forget: the phone's game screen was hidden (other tab/app, screen off) or is showing again. Payload: { visible: boolean }. */
+  screenVisibility: 'screen:visibility',
 } as const;
+
+/** A team must stay off the game screen this long before the host is warned (a notification glance is not a departure). */
+export const AWAY_GRACE_MS = 2000;
 
 export interface TimerSync {
   serverNow: number;

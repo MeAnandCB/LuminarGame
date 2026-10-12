@@ -216,6 +216,7 @@ function Screen({ team, pub, live, now }: { team: TeamState; pub: PublicState | 
       <Card title={st === 'LOBBY' ? "You're in the lobby" : 'Registered!'} icon="🛰️" spin>
         <p>{st === 'LOBBY' ? 'Registration is closed. Stay on this screen – the host will start Level 1 soon.' : 'Waiting for the host to close registration.'}</p>
         <p className="mt-3 text-muted">{pub ? `${pub.counts.teams} team(s) registered · ${pub.counts.connected} connected` : ''}</p>
+        {st === 'LOBBY' && <p className="mt-3 text-sm text-warn">👀 Stay on this page until the game ends: the host is told when you switch to another app or tab.</p>}
         <div className="pop mt-4 rounded-xl border border-line bg-ink p-4 text-center">
           <p className="text-sm text-muted">Need a second phone? Open this site there, choose “add this phone” and enter your team code:</p>
           <p className="mono mt-2 text-3xl font-black tracking-[0.25em] text-neon" aria-label={`Team code ${team.team.code.split('').join(' ')}`}>{team.team.code}</p>
@@ -251,6 +252,7 @@ function Screen({ team, pub, live, now }: { team: TeamState; pub: PublicState | 
         <ul className="mt-4 list-disc space-y-1 pl-5 text-muted">
           <li>{round.total} questions · {round.kind === 'quiz' ? `${Math.round(round.durationMs / 60000)} minutes, at your own pace` : 'live - everyone answers the same question together'}</li>
           <li>Both teammates can read the screen – only one phone needs to answer.</li>
+          <li>Stay on this page until the game ends: the host is told when you switch to another app or tab.</li>
         </ul>
         <p className="float-dots mt-4 font-bold text-neon">Waiting for the host to press start</p>
       </Card>

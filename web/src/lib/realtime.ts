@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
-import { S2C, type Announcement, type TimerSync } from '../../../shared/contract';
+import { C2S, S2C, type Announcement, type TimerSync } from '../../../shared/contract';
 import type { AdminState, PublicState, TeamState } from '../../../shared/types';
 
 export type ConnStatus = 'connecting' | 'connected' | 'reconnecting' | 'denied';
@@ -47,7 +47,15 @@ export function useLive(role: 'team' | 'admin' | 'display', enabled = true): Liv
     socket.on(S2C.timerSync, (t: TimerSync) => sync(t.serverNow));
     socket.on(S2C.announce, (a: Announcement) => setAnnouncement({ ...a, n: ++counter.current }));
     socket.on(S2C.sessionEnded, () => setSessionEnded(true));
+
+    // Tell the host when this phone stops showing the game (other tab or app, screen off) and when it is back.
+    const report = () => socket.emit(C2S.screenVisibility, { visible: document.visibilityState !== 'hidden' });
+    if (role === 'team') {
+      document.addEventListener('visibilitychange', report);
+      socket.on('connect', () => document.visibilityState === 'hidden' && report()); // a reconnect starts out as "visible" on the server
+    }
     return () => {
+      document.removeEventListener('visibilitychange', report);
       socket.removeAllListeners();
       socket.io.removeAllListeners();
       socket.disconnect();

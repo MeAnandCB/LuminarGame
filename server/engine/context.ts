@@ -101,6 +101,10 @@ export interface AppConfig {
 /** Shared services every engine module needs. */
 export class Ctx {
   readonly presence = new Map<number, Set<string>>();
+  /** Sockets (by team) whose game screen is hidden right now. See engine/attention.ts. */
+  readonly hiddenSockets = new Map<number, Set<string>>();
+  /** When each currently-away team lost the game screen (server clock). */
+  readonly awaySince = new Map<number, number>();
   private listeners: Array<(c: ChangeSignal) => void> = [];
   private seqLast = 0;
 
@@ -196,6 +200,13 @@ export class Ctx {
 
   isConnected(teamId: number): boolean {
     return (this.presence.get(teamId)?.size ?? 0) > 0;
+  }
+
+  /** Connected, and not one of its phones is showing the game. */
+  isAway(teamId: number): boolean {
+    const phones = this.presence.get(teamId);
+    const hidden = this.hiddenSockets.get(teamId);
+    return !!phones && phones.size > 0 && !!hidden && [...phones].every((id) => hidden.has(id));
   }
 }
 

@@ -233,3 +233,26 @@ describe('persistence and recovery', () => {
     expect(SEED_ROUNDS.length).toBe(5);
   });
 });
+
+describe('noticing a phone that dropped off', () => {
+  it('a phone whose network dies is offline within a few seconds, not after the 45 s socket.io default', async () => {
+    b = await boot();
+    const { teams } = await setupEvent(b, { teams: 1 });
+    const id = teams[0]!.state.team.id;
+    const display = await connectSocket(b, { role: 'display' });
+    const phone = await connectSocket(b, { role: 'team' }, teams[0]!.cookieHeader);
+    await waitFor(() => b.h.ctx.isConnected(id));
+    await waitFor(() => display.publicStates.at(-1)?.leaderboard.find((r) => r.teamId === id)?.connected === true);
+
+    // A real network failure sends no close frame. Simulate it: nothing the phone transmits (not even heartbeat replies) arrives any more.
+    const ws = (phone.socket.io.engine.transport as unknown as { ws: { send: () => void } }).ws;
+    ws.send = () => undefined;
+    const t0 = Date.now();
+    await waitFor(() => !b.h.ctx.isConnected(id), 6000);
+    expect(Date.now() - t0).toBeLessThan(4500);
+    // and the projector is told straight away
+    await waitFor(() => display.publicStates.at(-1)?.leaderboard.find((r) => r.teamId === id)?.connected === false, 1000);
+    display.close();
+    phone.close();
+  }, 15_000);
+});

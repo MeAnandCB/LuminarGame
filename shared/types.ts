@@ -304,6 +304,8 @@ export interface AdminTeam {
   code: string;
   status: TeamStatus;
   connected: boolean;
+  /** Server time when every connected phone of this team lost the game screen; null while any phone shows it (or outside the game). */
+  awaySince: number | null;
   devices: number;
   total: number;
   qualified: boolean;

@@ -4,6 +4,7 @@ import { eligibleForRound } from '../games/shared.js';
 import { livePublic, teamLive } from '../games/live.js';
 import { isLive } from '../game/scoring.js';
 import { allowedActions } from './actions.js';
+import { awaySince } from './attention.js';
 import { remainingAt } from '../game/timer.js';
 import type {
   AdminChallenge, AdminRound, AdminState, AdminTeam, AuditEntry, LeaderboardRow, PublicRound, PublicState,
@@ -194,7 +195,7 @@ export function adminState(ctx: Ctx): AdminState | null {
   for (const t of teams) if (t.status === 'pending' || t.status === 'approved') nameCount.set(loose(t.name), (nameCount.get(loose(t.name)) ?? 0) + 1);
   const devices = new Map(ctx.db.all<{ team_id: number; n: number }>('SELECT team_id, COUNT(*) n FROM team_sessions GROUP BY team_id').map((r) => [r.team_id, r.n]));
   const adminTeams: AdminTeam[] = teams.map((t) => ({
-    id: t.id, name: t.name, players: [t.player1, t.player2], code: t.team_code, status: t.status, connected: ctx.isConnected(t.id),
+    id: t.id, name: t.name, players: [t.player1, t.player2], code: t.team_code, status: t.status, connected: ctx.isConnected(t.id), awaySince: awaySince(ctx, ev, t.id),
     devices: devices.get(t.id) ?? 0, total: totals.get(t.id) ?? 0, qualified: t.qualified === 1,
     duplicateName: (t.status === 'pending' || t.status === 'approved') && (nameCount.get(loose(t.name)) ?? 0) > 1, createdAt: t.created_at,
   }));

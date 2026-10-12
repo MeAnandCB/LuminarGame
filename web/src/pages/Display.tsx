@@ -1,9 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { LeaderboardRow, PublicState } from '../../../shared/types';
 import { fmtClock, remaining, useLive, useServerNow } from '../lib/realtime';
-import { ConnBadge, Leaderboard, QrImage, Spinner } from '../components/ui';
+import { useOfflineTeams } from '../lib/offlineTeams';
+import { ConnBadge, Leaderboard, OfflineTeamsContext, QrImage, Spinner } from '../components/ui';
 import { LiveView } from './display/Live';
 import { Backdrop, Emblem, FINALE_LEVEL, LEVELS, LevelIntro, skinOf, themeFor } from '../components/Backdrop';
+
+/** "A · B · C · D · +16 more": the first few names, then a count, so the line stays short. */
+function offlineLabel(names: string[], shown = 4): string {
+  return names.length <= shown ? names.join(' · ') : `${names.slice(0, shown).join(' · ')} · +${names.length - shown} more`;
+}
 
 export function DisplayApp() {
   const live = useLive('display');
@@ -18,11 +24,15 @@ export function DisplayApp() {
   }, [live.announcement]);
 
   const st = pub?.event?.state;
+  // From the lobby until the event is over every team is expected to stay connected; the room sees who dropped off.
+  const roster = useMemo(() => pub?.leaderboard.map((r) => ({ id: r.teamId, name: r.name, connected: r.connected })) ?? null, [pub?.leaderboard]);
+  const offline = useOfflineTeams(roster, st === 'LOBBY' || st === 'ROUND_READY' || st === 'ROUND_RUNNING' || st === 'ROUND_PAUSED' || st === 'ROUND_ENDED' || st === 'QUALIFICATION', () => undefined);
+  const offlineIds = useMemo(() => new Set(offline.map((t) => t.id)), [offline]);
   const inRound = st === 'ROUND_READY' || st === 'ROUND_RUNNING' || st === 'ROUND_PAUSED' || st === 'ROUND_ENDED';
   const level = st === 'QUALIFICATION' || st === 'EVENT_COMPLETED' ? FINALE_LEVEL : pub?.round?.level;
   const theme = themeFor(st, inRound ? level : undefined);
   return (
-    <>
+    <OfflineTeamsContext.Provider value={offlineIds}>
     <Backdrop theme={theme} />
     <LevelIntro level={inRound ? level : undefined} reset={st === 'SETUP' || st === 'REGISTRATION_OPEN' || st === 'LOBBY' || !st} />
     <main data-level={skinOf(level)} className="stage flex min-h-screen flex-col gap-[1.2vw] p-[1.6vw] text-[clamp(14px,1.45vw,30px)]">
@@ -31,6 +41,13 @@ export function DisplayApp() {
           <span aria-hidden="true" className="logo-b grid h-[3.2vw] w-[3.2vw] min-h-10 min-w-10 place-items-center rounded-xl bg-panel2 text-[1.8vw] font-black text-neon">B</span>
           <h1 className="text-[clamp(1.1rem,2.3vw,2.8rem)] font-black tracking-wide">{pub?.event?.name ?? 'BRAINBYTE ARENA'}</h1>
         </div>
+        {offline.length > 0 && (
+          // One line in the header's free middle: it can never push the page taller, however many teams are offline.
+          <section aria-label="Offline teams" aria-live="assertive" data-testid="offline-strip" className="pulse flex min-w-0 flex-1 items-center gap-[0.8vw] overflow-hidden rounded-2xl border-2 border-bad bg-[#3b0a1c] px-[1.2vw] py-[0.35vw] text-[#ffd5dc]">
+            <strong className="shrink-0 text-[1.1em]"><span aria-hidden="true">⚠ </span>OFFLINE</strong>
+            <span className="truncate text-[1.1em] font-bold">{offlineLabel(offline.map((t) => t.name))}</span>
+          </section>
+        )}
         <div className="flex items-center gap-4">
           {pub?.event && pub.event.state !== 'SETUP' && (
             <div className="text-right">
@@ -50,7 +67,7 @@ export function DisplayApp() {
 
       {!pub ? <Spinner label="Connecting to the arena" /> : !pub.event ? <Message title="Waiting for the host" body="The event has not been created yet." /> : <Body pub={pub} now={now} />}
     </main>
-    </>
+    </OfflineTeamsContext.Provider>
   );
 }
 

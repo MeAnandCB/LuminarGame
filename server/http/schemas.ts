@@ -32,6 +32,8 @@ export const answerSchema = z.object({
   doubleDown: z.boolean().optional(),
 });
 
+export const visibilitySchema = z.object({ visible: z.boolean() });
+
 export const skipSchema = z.object({
   requestId: z.string().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/),
   challengeId: z.number().int().positive().optional(),

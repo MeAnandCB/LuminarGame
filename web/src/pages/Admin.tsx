@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { AdminChallenge, AdminRound, AdminState, AdminTeam, EventSettings, RoundConfig } from '../../../shared/types';
+import { AWAY_GRACE_MS } from '../../../shared/contract';
 import { ApiFailure, api, errMsg, setCsrf } from '../lib/api';
 import { fmtClock, remaining, useLive, useServerNow } from '../lib/realtime';
 import { beep, loadSoundPref, saveSoundPref, unlockAudio } from '../lib/alertSound';
 import { useOfflineTeams } from '../lib/offlineTeams';
 import { ConnBadge, Empty, ErrorBanner, Leaderboard, QrImage, Spinner, useConfirm } from '../components/ui';
 import { FaceImage } from '../components/FaceImage';
+
+/** How long an approved team has been off the game screen, once past the short grace period; null while it is on it. */
+const awayMs = (t: AdminTeam, now: number): number | null => (t.status === 'approved' && t.awaySince !== null && now - t.awaySince >= AWAY_GRACE_MS ? now - t.awaySince : null);
+const awaySecs = (ms: number) => Math.max(1, Math.round(ms / 1000));
 
 export function AdminApp() {
   const [phase, setPhase] = useState<'loading' | 'login' | 'in'>('loading');
@@ -93,9 +98,10 @@ function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
     if (navigator.userActivation?.hasBeenActive) arm(); // the sign-in click already counts
     return () => events.forEach((e) => window.removeEventListener(e, arm));
   }, []);
-  const offline = useOfflineTeams(state?.teams ?? null, !!state && state.event.state !== 'EVENT_COMPLETED', () => {
+  const offline = useOfflineTeams(state ? state.teams.filter((t) => t.status === 'approved') : null, !!state && state.event.state !== 'EVENT_COMPLETED', () => {
     if (soundOn) beep();
   });
+  const away = state ? state.teams.filter((t) => awayMs(t, now) !== null) : [];
   function toggleSound() {
     const next = !soundOn;
     setSoundOn(next);
@@ -152,13 +158,20 @@ function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
           <button className="btn btn-ghost btn-sm ml-auto" onClick={() => setTab('teams')}>View teams</button>
         </section>
       )}
+      {away.length > 0 && (
+        <section aria-label="Teams away from the game screen" aria-live="polite" data-testid="away-banner" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border-2 border-warn bg-[#2a1805] px-4 py-3 text-[#fde68a]">
+          <strong>👀 {away.length} team{away.length === 1 ? ' has' : 's have'} left the game screen:</strong>
+          {away.map((t) => <span key={t.id} className="badge badge-warn">{t.name}<span aria-hidden="true"> · {awaySecs(awayMs(t, now)!)}s</span></span>)}
+          <button className="btn btn-ghost btn-sm ml-auto" onClick={() => setTab('teams')}>View teams</button>
+        </section>
+      )}
       {error && <ErrorBanner>{error}</ErrorBanner>}
       {state === null ? (
         <CreateEvent busy={busy} onCreate={(name) => post('/admin/event', { name })} />
       ) : (
         <>
           {tab === 'control' && <Control s={state} now={now} busy={busy} post={post} confirm={confirm.ask} />}
-          {tab === 'teams' && <Teams s={state} busy={busy} post={post} confirm={confirm.ask} />}
+          {tab === 'teams' && <Teams s={state} now={now} busy={busy} post={post} confirm={confirm.ask} />}
           {tab === 'rounds' && <Rounds s={state} act={act} />}
           {tab === 'scores' && <Scores s={state} act={act} />}
           {tab === 'audit' && <Audit s={state} />}
@@ -320,7 +333,7 @@ function FinalistsControl({ s }: { s: AdminState }) {
   );
 }
 
-function Teams({ s, busy, post, confirm }: { s: AdminState; busy: boolean; post: Post; confirm: Ask }) {
+function Teams({ s, now, busy, post, confirm }: { s: AdminState; now: number; busy: boolean; post: Post; confirm: Ask }) {
   const early = ['SETUP', 'REGISTRATION_OPEN', 'LOBBY'].includes(s.event.state);
   const slots = Array.from({ length: Math.max(s.event.settings.maxTeams, s.teams.filter((t) => t.status !== 'rejected').length) }, (_, i) => i);
   const active = s.teams.filter((t) => t.status !== 'rejected');
@@ -334,7 +347,9 @@ function Teams({ s, busy, post, confirm }: { s: AdminState; busy: boolean; post:
           <td className="px-2 py-2 text-sm">{t.players.join(', ')}</td>
           <td className="px-2 py-2 mono text-sm">{t.code}</td>
           <td className="px-2 py-2"><span className={`badge ${t.status === 'approved' ? 'badge-ok' : t.status === 'pending' ? 'badge-warn' : 'badge-bad'}`}>{t.status}</span></td>
-          <td className="px-2 py-2 text-sm">{t.connected || t.status !== 'approved' ? (t.connected ? '● online' : '◌ offline') : <span className="badge badge-bad">◌ offline</span>} · {t.devices} device{t.devices === 1 ? '' : 's'}</td>
+          <td className="px-2 py-2 text-sm">
+            {!t.connected ? (t.status === 'approved' ? <span className="badge badge-bad">◌ offline</span> : '◌ offline') : awayMs(t, now) !== null ? <span className="badge badge-warn">👀 away {awaySecs(awayMs(t, now)!)}s</span> : '● online'} · {t.devices} device{t.devices === 1 ? '' : 's'}
+          </td>
           <td className="px-2 py-2">
             <div className="flex flex-wrap gap-1">
               {early && t.status !== 'approved' && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => post(`/admin/teams/${t.id}/status`, { status: 'approved' })}>Approve</button>}

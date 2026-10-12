@@ -1,6 +1,7 @@
 import type http from 'node:http';
 import { Server, type Socket } from 'socket.io';
 import { C2S, S2C, type Announcement, type TimerSync } from '../../shared/contract.js';
+import { forgetSocket, reportVisibility } from '../engine/attention.js';
 import { AppError, type ChangeSignal, type Ctx, type TeamRow } from '../engine/context.js';
 import * as events from '../engine/events.js';
 import * as play from '../games/index.js';
@@ -9,7 +10,7 @@ import { resolveTeamSession } from '../engine/teams.js';
 import { adminState, publicState, teamState } from '../engine/views.js';
 import { resolveAdminSession } from '../http/auth.js';
 import { ADMIN_COOKIE, TEAM_COOKIE, parseCookies, type RateLimiter } from '../http/middleware.js';
-import { answerSchema } from '../http/schemas.js';
+import { answerSchema, visibilitySchema } from '../http/schemas.js';
 
 export interface Realtime {
   io: Server;
@@ -42,6 +43,10 @@ function fail(ack: unknown, e: unknown): void {
 export function attachRealtime(p: { server: http.Server; ctx: Ctx; limiters: { answer: RateLimiter; hint: RateLimiter }; manualTicker: boolean }): Realtime {
   const { ctx } = p;
   const io = new Server(p.server, {
+    // A phone that loses Wi-Fi (or is locked) sends no goodbye. With socket.io's defaults (25 s + 20 s) it would still look
+    // online for up to 45 s. This notices within ~3 s at the cost of one tiny ping per second per screen.
+    pingInterval: 1000,
+    pingTimeout: 2000,
     serveClient: false,
     maxHttpBufferSize: 10_000,
     // Same-origin only: browsers always send Origin on WebSocket upgrades.
@@ -176,10 +181,23 @@ export function attachRealtime(p: { server: http.Server; ctx: Ctx; limiters: { a
       }
     });
 
+    // Fire-and-forget: no ack, and a malformed or stale report is simply ignored.
+    socket.on(C2S.screenVisibility, (payload: unknown) => {
+      try {
+        guard();
+        const body = visibilitySchema.safeParse(payload);
+        if (body.success) reportVisibility(ctx, teamId, socket.id, body.data.visible);
+      } catch {
+        /* the session ended; the kick handles the rest */
+      }
+    });
+
     socket.on('disconnect', () => {
+      const wasAway = ctx.isAway(teamId);
       const s = ctx.presence.get(teamId);
       s?.delete(socket.id);
       if (s && s.size === 0) ctx.presence.delete(teamId);
+      forgetSocket(ctx, teamId, socket.id, wasAway);
       ctx.emit({});
     });
   });

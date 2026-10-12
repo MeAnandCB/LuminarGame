@@ -344,12 +344,19 @@ test('the host sees and hears it when a team goes offline', async ({ browser, pl
 
   const drifters = await registerTeam(browser, pin, 'Drifters', 'D1', 'D2');
   const ghosts = await registerTeam(browser, pin, 'Ghosts', 'G1', 'G2');
+  await api.post('/registration/confirm'); // from the lobby on, the projector shows who dropped off too
+  const dispCtx = await browser.newContext({ viewport: PROJECTOR });
+  const display = await dispCtx.newPage();
+  await display.goto('/display');
+  const strip = display.getByTestId('offline-strip');
   await expect(banner).toBeHidden();
+  await expect(strip).toBeHidden();
 
-  // a team drops: after the short grace period it is listed and the host hears the alert
+  // a team drops: within a couple of seconds it is listed and the host hears the alert
   await drifters.page.close();
-  await expect(banner).toContainText('1 team is offline');
+  await expect(banner).toContainText('1 team is offline', { timeout: 4000 });
   await expect(banner).toContainText('Drifters');
+  await expect(strip).toContainText('Drifters', { timeout: 4000 });
   await expect.poll(tones).toBe(3);
   await admin.getByRole('tab', { name: 'Teams' }).click();
   await expect(admin.getByRole('row', { name: /Drifters/ }).locator('.badge-bad')).toContainText('offline');
@@ -369,9 +376,71 @@ test('the host sees and hears it when a team goes offline', async ({ browser, pl
   expect(await tones()).toBe(0);
 
   // both phones come back (same cookies, so same team): the banner clears
-  await (await drifters.ctx.newPage()).goto('/');
+  const back = await drifters.ctx.newPage();
+  await back.goto('/');
   await (await ghosts.ctx.newPage()).goto('/');
   await expect(banner).toBeHidden();
+  await expect(strip).toBeHidden();
 
-  await Promise.all([adminCtx.close(), drifters.ctx.close(), ghosts.ctx.close(), req.dispose()]);
+  // in a running round the projector also marks the team's row on the leaderboard
+  await api.post('/round/prepare');
+  await api.post('/round/start');
+  await expect(display.getByRole('table').first()).toBeVisible();
+  await back.close();
+  await expect(strip).toContainText('Drifters', { timeout: 4000 });
+  await expect(display.getByRole('row', { name: /Drifters/ })).toContainText('offline');
+  await expect(display.getByRole('row', { name: /Ghosts/ })).not.toContainText('offline');
+
+  await Promise.all([adminCtx.close(), dispCtx.close(), drifters.ctx.close(), ghosts.ctx.close(), req.dispose()]);
+});
+
+test('the host is warned when a participant leaves the game screen', async ({ browser, playwright }) => {
+  const req = await playwright.request.newContext({ baseURL: 'http://127.0.0.1:3100' });
+  const api = new AdminApi(req);
+  await api.login();
+  await api.post('/event', { name: 'Focus Arena' });
+  await api.post('/registration/open');
+  const pin = (await api.state()).event.pin as string;
+  const wanderer = await registerTeam(browser, pin, 'Wanderers', 'W1', 'W2');
+  const steady = await registerTeam(browser, pin, 'Steady Eddies', 'S1', 'S2');
+
+  const adminCtx = await browser.newContext({ viewport: { width: 1366, height: 800 } });
+  const admin = await adminCtx.newPage();
+  await admin.goto('/admin');
+  await admin.getByLabel('Username').fill(ADMIN.username);
+  await admin.getByLabel('Password').fill(ADMIN.password);
+  await admin.getByRole('button', { name: 'Sign in' }).click();
+  const banner = admin.getByTestId('away-banner');
+
+  // while registration is open people may leave the page to scan or copy the PIN, so nobody is watched yet
+  const setVisible = (page: typeof wanderer.page, visible: boolean) =>
+    page.evaluate((v) => {
+      // the page reads document.visibilityState when the browser fires visibilitychange
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (v ? 'visible' : 'hidden') });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, visible);
+  await setVisible(wanderer.page, false);
+  await admin.waitForTimeout(2500);
+  await expect(banner).toBeHidden();
+  await setVisible(wanderer.page, true);
+
+  // registration closes: the game screen is now expected to stay in front, and the phone says so
+  await api.post('/registration/confirm');
+  await expect(wanderer.page.getByText(/host is told when you switch to another app or tab/)).toBeVisible();
+
+  await setVisible(wanderer.page, false);
+  await expect(banner).toContainText('1 team has left the game screen');
+  await expect(banner).toContainText('Wanderers');
+  await expect(banner).not.toContainText('Steady Eddies');
+  await admin.getByRole('tab', { name: 'Teams' }).click();
+  await expect(admin.getByRole('row', { name: /Wanderers/ }).locator('.badge-warn')).toContainText('away');
+  await expect(admin.getByRole('row', { name: /Steady Eddies/ })).toContainText('online');
+
+  // back on the game screen: the warning clears and the departure is on record
+  await setVisible(wanderer.page, true);
+  await expect(banner).toBeHidden();
+  await admin.getByRole('tab', { name: 'Audit log' }).click();
+  await expect(admin.getByRole('cell', { name: 'team.left_screen' })).toBeVisible();
+
+  await Promise.all([adminCtx.close(), wanderer.ctx.close(), steady.ctx.close(), req.dispose()]);
 });

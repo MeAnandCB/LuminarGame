@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import QRCode from 'qrcode';
 import type { ConnStatus } from '../lib/realtime';
 import type { LeaderboardRow } from '../../../shared/types';
@@ -144,7 +144,11 @@ export function Vitals({ row }: { row: LeaderboardRow }) {
   );
 }
 
+/** Ids of teams to flag as offline in every Leaderboard below (the projector provides it; phones leave it empty). */
+export const OfflineTeamsContext = createContext<ReadonlySet<number>>(new Set());
+
 export function Leaderboard({ rows, provisional, hidden, highlightId, compact, showProgress, big, hideOffline, dense }: { rows: LeaderboardRow[]; provisional?: boolean; hidden?: boolean; highlightId?: number; compact?: boolean; showProgress?: boolean; big?: boolean; hideOffline?: boolean; dense?: boolean }) {
+  const offlineIds = useContext(OfflineTeamsContext);
   if (rows.length === 0) return <Empty>No teams yet.</Empty>;
   const text = dense ? 'text-[clamp(0.85rem,1.3vw,1.4rem)] [&_td]:!py-1' : big ? 'text-[clamp(1rem,1.9vw,1.9rem)]' : compact ? 'text-sm' : 'text-base';
   return (
@@ -162,11 +166,12 @@ export function Leaderboard({ rows, provisional, hidden, highlightId, compact, s
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={r.teamId} style={{ animationDelay: `${Math.min(i, 12) * 40}ms` }} className={`row-in ${!hidden && r.rank >= 1 && r.rank <= 3 ? `rank-${r.rank}` : ''} ${r.teamId === highlightId ? 'outline outline-2 outline-neon' : ''} bg-panel2/80 ${r.eliminated ? 'opacity-60' : ''}`}>
+            <tr key={r.teamId} style={{ animationDelay: `${Math.min(i, 12) * 40}ms` }} className={`row-in ${!hidden && r.rank >= 1 && r.rank <= 3 ? `rank-${r.rank}` : ''} ${r.teamId === highlightId ? 'outline outline-2 outline-neon' : offlineIds.has(r.teamId) ? 'outline outline-2 outline-bad' : ''} bg-panel2/80 ${r.eliminated ? 'opacity-60' : ''}`}>
               <td className="rounded-l-xl px-3 py-2 text-neon">{hidden ? '' : <RankMark rank={r.rank} />}</td>
               <td className="w-full max-w-0 truncate px-2 py-2 font-semibold">
                 <span className={r.eliminated ? 'line-through' : ''}>{r.name}</span>
                 <Vitals row={r} />
+                {offlineIds.has(r.teamId) && <span className="badge badge-bad beat ml-2">◌ offline</span>}
                 {r.tied && !hidden && !big && !dense && <span className="badge badge-warn ml-2" title="Tied on every criterion; ordered by team id">tie</span>}
               </td>
               {showProgress && (
