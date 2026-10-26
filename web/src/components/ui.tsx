@@ -3,7 +3,8 @@ import QRCode from 'qrcode';
 import type { ConnStatus } from '../lib/realtime';
 import type { LeaderboardRow, RoundKind } from '../../../shared/types';
 
-export function ConnBadge({ status }: { status: ConnStatus }) {
+/** `compact` shrinks the healthy state to a green dot (the words stay for screen readers); problems always show in full. */
+export function ConnBadge({ status, compact }: { status: ConnStatus; compact?: boolean }) {
   const map: Record<ConnStatus, { text: string; cls: string; dot: string }> = {
     connected: { text: 'Connected', cls: 'badge badge-ok', dot: '●' },
     connecting: { text: 'Connecting…', cls: 'badge badge-warn', dot: '◌' },
@@ -11,6 +12,14 @@ export function ConnBadge({ status }: { status: ConnStatus }) {
     denied: { text: 'Signed out', cls: 'badge badge-bad', dot: '✕' },
   };
   const m = map[status];
+  if (compact && status === 'connected') {
+    return (
+      <span className="grid h-6 w-4 shrink-0 place-items-center" role="status" aria-live="polite">
+        <span className="dot-ok" aria-hidden="true" />
+        <span className="sr-only">● Connected</span>
+      </span>
+    );
+  }
   return (
     <span className={m.cls} role="status" aria-live="polite">
       <span aria-hidden="true">{m.dot}</span> {m.text}

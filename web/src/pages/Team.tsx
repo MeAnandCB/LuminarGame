@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom';
 import type { AnswerResult, PublicState, TeamState } from '../../../shared/types';
 import { ApiFailure, api, errMsg, newRequestId } from '../lib/api';
-import { fmtClock, remaining, useLive, useServerNow, type Live } from '../lib/realtime';
+import { fmtClock, remaining, useLive, useServerNow, type ConnStatus, type Live } from '../lib/realtime';
 import { submitAnswer } from '../lib/submit';
-import { ConnBadge, ErrorBanner, Leaderboard, Spinner } from '../components/ui';
+import { ConfirmDialog, ConnBadge, ErrorBanner, Leaderboard, Spinner } from '../components/ui';
 import { LivePlay } from './team/LivePlay';
 import { OptionButtons } from '../components/OptionButtons';
 import { Backdrop, Emblem, FINALE_LEVEL, LEVELS, LevelIntro, skinOf, themeFor } from '../components/Backdrop';
@@ -44,18 +44,21 @@ export function TeamApp() {
   return <Session initial={initial!} onLost={lost} />;
 }
 
-function Shell({ children, state, level }: { children: React.ReactNode; state?: string; level?: number }) {
+/** `fit` = a question is on screen: the page is one phone-screen tall and has no logo header (see .stage-fit). */
+function Shell({ children, state, level, fit }: { children: React.ReactNode; state?: string; level?: number; fit?: boolean }) {
   const inRound = state === 'ROUND_READY' || state === 'ROUND_RUNNING' || state === 'ROUND_PAUSED' || state === 'ROUND_ENDED';
   const lv = state === 'QUALIFICATION' || state === 'EVENT_COMPLETED' ? FINALE_LEVEL : level;
   return (
     <>
     <Backdrop theme={themeFor(state, inRound ? lv : undefined)} />
     <LevelIntro level={inRound ? lv : undefined} reset={state === 'SETUP' || state === 'REGISTRATION_OPEN' || state === 'LOBBY'} />
-    <main data-level={inRound || state === 'QUALIFICATION' || state === 'EVENT_COMPLETED' ? skinOf(lv) : undefined} className="stage mx-auto flex min-h-screen w-full max-w-xl flex-col gap-4 px-4 py-5">
-      <header className="flex items-center gap-2">
-        <span aria-hidden="true" className="logo-b grid h-9 w-9 place-items-center rounded-lg bg-panel2 font-black text-neon">B</span>
-        <h1 className="text-lg font-black tracking-wide">BRAINBYTE <span className="text-violet">ARENA</span></h1>
-      </header>
+    <main data-level={inRound || state === 'QUALIFICATION' || state === 'EVENT_COMPLETED' ? skinOf(lv) : undefined} className={`stage mx-auto flex w-full max-w-xl flex-col ${fit ? 'stage-fit px-3' : 'min-h-screen gap-4 px-4 py-5'}`}>
+      {!fit && (
+        <header className="flex items-center gap-2">
+          <span aria-hidden="true" className="logo-b grid h-9 w-9 place-items-center rounded-lg bg-panel2 font-black text-neon">B</span>
+          <h1 className="text-lg font-black tracking-wide">BRAINBYTE <span className="text-violet">ARENA</span></h1>
+        </header>
+      )}
       {children}
     </main>
     </>
@@ -162,30 +165,61 @@ function Session({ initial, onLost }: { initial: TeamState; onLost: (m: string) 
     api('GET', '/team/me').catch((e) => e instanceof ApiFailure && e.status === 401 && onLost('Your session has ended. Please join again.'));
   }, [live.status, onLost]);
 
+  const fit = isPlaying(team, pub);
+
   return (
-    <Shell state={team.eventState} level={pub?.round?.level}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-xl font-black leading-tight">{team.team.name}</p>
-          <p className="text-sm text-muted">{team.team.players.join(' & ')}</p>
-        </div>
-        <ConnBadge status={live.status} />
-      </div>
-      <ScoreStrip team={team} />
-      {live.announcement && <Toast key={live.announcement.n} text={live.announcement.text} />}
+    <Shell state={team.eventState} level={pub?.round?.level} fit={fit}>
+      {fit ? (
+        <PlayBar team={team} status={live.status} />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xl font-black leading-tight">{team.team.name}</p>
+              <p className="text-sm text-muted">{team.team.players.join(' & ')}</p>
+            </div>
+            <ConnBadge status={live.status} />
+          </div>
+          <ScoreStrip team={team} />
+        </>
+      )}
+      {live.announcement && <Toast key={live.announcement.n} text={live.announcement.text} float={fit} />}
       <Screen team={team} pub={pub} live={live} now={now} />
     </Shell>
   );
 }
 
-function Toast({ text }: { text: string }) {
+/** True while this phone shows an answerable (or just-answered) question, so the layout must fit one screen. */
+function isPlaying(team: TeamState, pub: PublicState | null): boolean {
+  const st = team.eventState;
+  if (st !== 'ROUND_RUNNING' && st !== 'ROUND_PAUSED') return false;
+  if (team.team.status !== 'approved' || !team.eligible || !pub?.round) return false;
+  if (pub.round.kind === 'quiz') return !!team.progress && !team.progress.finished && !!team.challenge;
+  return !!team.live && !team.live.eliminated && !!pub.live;
+}
+
+/** One slim line replacing the team header and score boxes while playing. */
+function PlayBar({ team, status }: { team: TeamState; status: ConnStatus }) {
+  const rank = team.rankHidden ? 'hidden' : team.rank ? `#${team.rank}` : '–';
+  return (
+    <div role="group" aria-label="Your standing" className="topbar">
+      <p className="min-w-0 flex-1 truncate font-black leading-tight">{team.team.name}</p>
+      <p className="tnum shrink-0 text-sm text-muted"><span className="sr-only">Points </span><strong className="text-base font-black text-text"><AnimatedNumber value={team.score.total} /></strong> pts</p>
+      <p className="topbar-rank"><span className="sr-only">Rank </span>{rank}</p>
+      <ConnBadge status={status} compact />
+    </div>
+  );
+}
+
+/** `float` lays it over the top bar instead of pushing the one-screen play layout down. */
+function Toast({ text, float }: { text: string; float?: boolean }) {
   const [shown, setShown] = useState(true);
   useEffect(() => {
     const id = setTimeout(() => setShown(false), 6000);
     return () => clearTimeout(id);
   }, []);
   if (!shown) return null;
-  return <div role="status" className="pop rounded-xl border border-neon bg-panel2 px-4 py-3 font-semibold text-neon">📣 {text}</div>;
+  return <div role="status" className={`pop rounded-xl border border-neon bg-panel2 px-4 py-3 font-semibold text-neon ${float ? 'fixed inset-x-3 top-2 z-30 mx-auto max-w-xl shadow-lg' : ''}`}>📣 {text}</div>;
 }
 
 function ScoreStrip({ team }: { team: TeamState }) {
@@ -312,6 +346,13 @@ function Play({ team, round, live, now, paused }: { team: TeamState; round: NonN
     }
   }, [ch]);
 
+  // Feedback is for the question just answered: let it fade so it does not squeeze the next one. Warnings stay until the next try.
+  useEffect(() => {
+    if (!result || result.outcome === 'late' || result.outcome === 'rejected') return;
+    const id = setTimeout(() => setResult(null), 3500);
+    return () => clearTimeout(id);
+  }, [result]);
+
   async function submit(answer: string) {
     if (!ch || busy) return;
     setBusy(true);
@@ -364,87 +405,88 @@ function Play({ team, round, live, now, paused }: { team: TeamState; round: NonN
   const pct = Math.round((team.progress.position / team.progress.total) * 100);
   const timeUp = left <= 0 && !paused;
 
+  const hintShown = !!team.hint?.available && (!!hint || team.hint.used);
+  const hintText = hint?.text ?? team.hint?.text;
+  const hintCost = team.hint?.penalty ? `−${team.hint.penalty} points` : 'free';
+
   return (
-    <section data-level={skinOf(round.level)} className="flex flex-col gap-3" aria-label="Current question">
-      <div className="panel flex items-center justify-between gap-3 px-4 py-3">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-widest text-[var(--accent)]"><Emblem level={round.level} />Level {round.level} · Quick Brain</p>
-          <p className="font-bold">Question {ch.position + 1} of {ch.total}</p>
+    <section data-level={skinOf(round.level)} className="play-fit" aria-label="Current question">
+      <div className="hud panel">
+        <div className="hud-row">
+          <div className="min-w-0">
+            <p className="hud-kicker"><Emblem level={round.level} />Level {round.level} · Quick Brain</p>
+            <p className="font-bold leading-tight">Question {ch.position + 1} of {ch.total}</p>
+          </div>
+          <div className="shrink-0 text-right" role="timer" aria-label={`Time remaining ${fmtClock(left)}`}>
+            <p className={`mono text-2xl font-black leading-none ${left < 30000 && !paused ? 'urgent text-bad' : 'text-text'}`}>{fmtClock(left)}</p>
+            <p className="mt-0.5 text-[11px] leading-none text-muted">{paused ? 'PAUSED' : 'remaining'}</p>
+          </div>
         </div>
-        <div className="text-right" role="timer" aria-label={`Time remaining ${fmtClock(left)}`}>
-          <p className={`mono text-3xl font-black ${left < 30000 && !paused ? 'urgent text-bad' : 'text-text'}`}>{fmtClock(left)}</p>
-          <p className="text-xs text-muted">{paused ? 'PAUSED' : 'remaining'}</p>
+        <div className="hud-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Round progress">
+          <div className="h-full bg-gradient-to-r from-[var(--accent)] to-[var(--accent2,var(--accent))] shadow-[0_0_12px_var(--accent)] transition-[width] duration-700" style={{ width: `${pct}%` }} />
         </div>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-panel2" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Round progress">
-        <div className="h-full bg-gradient-to-r from-[var(--accent)] to-[var(--accent2,var(--accent))] shadow-[0_0_12px_var(--accent)] transition-[width] duration-700" style={{ width: `${pct}%` }} />
       </div>
 
       {paused ? (
-        <div role="status" className="panel pop border-warn p-6 text-center">
+        <div role="status" className="panel pop m-auto w-full border-warn p-6 text-center">
           <p className="text-3xl">⏸</p>
           <p className="text-xl font-black">Round paused</p>
           <p className="text-muted">The host paused the game. Your progress and remaining time are safe.</p>
         </div>
       ) : (
         <>
-          {result && (
-            <div role="status" aria-live="polite" className={`${result.outcome === 'correct' ? 'res-correct' : result.outcome === 'incorrect' ? 'res-wrong' : 'pop'} rounded-xl border-2 px-4 py-3 font-semibold ${OUTCOME_UI[result.outcome].cls}`}>
-              <span aria-hidden="true">{OUTCOME_UI[result.outcome].icon} </span>
-              <span className="sr-only">{OUTCOME_UI[result.outcome].label}: </span>
-              {result.message}
-              {result.duplicate ? ' (already received)' : ''}
-            </div>
-          )}
-          {error && <ErrorBanner>{error}</ErrorBanner>}
-          <article key={ch.id} className="panel glow pop p-4">
-            <h2 className="text-lg font-black text-[var(--accent)]">{ch.title}</h2>
-            <p className="prompt mt-2 text-base">{ch.prompt}</p>
-            <p className="mt-3 text-xs text-muted">Worth {ch.points} points · one answer only</p>
-          </article>
+          <div className="play-scroll" tabIndex={0} role="group" aria-label="Question">
+            {result && (
+              <div role="status" aria-live="polite" className={`${result.outcome === 'correct' ? 'res-correct' : result.outcome === 'incorrect' ? 'res-wrong' : 'pop'} flex-none rounded-xl border-2 px-3 py-1.5 text-sm font-semibold ${OUTCOME_UI[result.outcome].cls}`}>
+                <span aria-hidden="true">{OUTCOME_UI[result.outcome].icon} </span>
+                <span className="sr-only">{OUTCOME_UI[result.outcome].label}: </span>
+                {result.message}
+                {result.duplicate ? ' (already received)' : ''}
+              </div>
+            )}
+            {error && <ErrorBanner>{error}</ErrorBanner>}
+            <article key={ch.id} className="qcard panel glow pop">
+              <h2 className="font-black text-[var(--accent)]">{ch.title}</h2>
+              <p className="prompt">{ch.prompt}</p>
+              {hintShown && <p className="mt-2 text-sm"><strong>Hint:</strong> {hintText} {hint && <span className="text-xs text-muted">({hint.note})</span>}</p>}
+              <div className="qcard-foot">
+                <span>Worth {ch.points} points · one answer only</span>
+                <span className="flex shrink-0 gap-1.5">
+                  {team.hint?.available && !hintShown && (
+                    <button type="button" className="btn btn-ghost btn-xs" disabled={busy} onClick={useHint} aria-label={`Reveal hint (${hintCost})`}>
+                      <span aria-hidden="true">💡</span> Hint{team.hint.penalty ? <span className="text-muted"> −{team.hint.penalty}</span> : null}
+                    </button>
+                  )}
+                  {team.canSkip && (
+                    <button type="button" className="btn btn-ghost btn-xs" disabled={busy || timeUp} onClick={() => setConfirmSkip(true)} aria-label="Skip question">
+                      <span aria-hidden="true">⏭</span> Skip
+                    </button>
+                  )}
+                </span>
+              </div>
+            </article>
+          </div>
 
-          <form onSubmit={(e) => { e.preventDefault(); if (ch.kind !== 'choice') void submit(value); }} className="flex flex-col gap-3">
+          <form onSubmit={(e) => { e.preventDefault(); if (ch.kind !== 'choice') void submit(value); }} className="dock">
             {ch.kind === 'choice' && ch.options ? (
               <OptionButtons options={ch.options} value={value} onChange={setValue} />
             ) : (
               <div>
                 <label className="lbl" htmlFor="ans">Your answer</label>
                 <input
-                  id="ans" className="field mono !min-h-14 text-xl" value={value} onChange={(e) => setValue(e.target.value)}
+                  id="ans" className="field mono text-xl" value={value} onChange={(e) => setValue(e.target.value)}
                   maxLength={120} autoComplete="off" autoCorrect="off" autoCapitalize={ch.kind === 'text' ? 'characters' : 'none'} spellCheck={false}
                   inputMode={ch.kind === 'number' ? 'decimal' : 'text'} enterKeyHint="send"
                 />
               </div>
             )}
-            <button type={ch.kind === 'choice' ? 'button' : 'submit'} onClick={ch.kind === 'choice' ? () => void submit(value) : undefined} className="btn btn-primary !min-h-14 text-lg" disabled={busy || !value.trim() || timeUp}>
+            <button type={ch.kind === 'choice' ? 'button' : 'submit'} onClick={ch.kind === 'choice' ? () => void submit(value) : undefined} className="btn btn-primary btn-lock" disabled={busy || !value.trim() || timeUp}>
               {busy ? 'Sending…' : timeUp ? "Time's up" : 'Lock in answer'}
             </button>
-            {team.canSkip && (
-              confirmSkip ? (
-                <div className="flex items-center gap-2 rounded-xl border border-line p-3" role="group" aria-label="Confirm skip">
-                  <span className="flex-1 text-sm">Skip this question? It scores nothing and you cannot come back.</span>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmSkip(false)}>Keep</button>
-                  <button type="button" className="btn btn-violet btn-sm" disabled={busy} onClick={() => void skip()}>Skip it</button>
-                </div>
-              ) : (
-                <button type="button" className="btn btn-ghost" disabled={busy || timeUp} onClick={() => setConfirmSkip(true)}>⏭ Skip question</button>
-              )
-            )}
           </form>
-
-          {team.hint?.available && (
-            <div className="panel px-4 py-3">
-              {hint || team.hint.used ? (
-                <p><strong>Hint:</strong> {hint?.text ?? team.hint.text} {hint && <span className="text-xs text-muted">({hint.note})</span>}</p>
-              ) : (
-                <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={useHint}>
-                  💡 Reveal hint {team.hint.penalty ? `(−${team.hint.penalty} points)` : '(free)'}
-                </button>
-              )}
-            </div>
-          )}
         </>
       )}
+      <ConfirmDialog open={confirmSkip} title="Skip this question?" body="It scores nothing and you cannot come back." confirmLabel="Skip it" onConfirm={() => void skip()} onCancel={() => setConfirmSkip(false)} />
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { ADMIN, AdminApi, noHorizontalOverflow, registerTeam } from './helpers';
+import { ADMIN, AdminApi, fitsOneScreen, noHorizontalOverflow, registerTeam } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -86,6 +86,7 @@ test('layouts have no horizontal overflow and pass automated accessibility check
     await p.goto('/');
     await expect(p.getByText('Question 1 of 10')).toBeVisible();
     await noHorizontalOverflow(p);
+    if (vp.width < 500) await fitsOneScreen(p); // photo, four names and Lock in together, no scrolling
     // choice buttons are touch friendly (>= 44px tall)
     const box = await p.getByRole('radio').first().boundingBox();
     expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -137,6 +138,7 @@ test('layouts have no horizontal overflow and pass automated accessibility check
   const card = kb.getByRole('group', { name: 'Your bingo card' });
   await expect(card.getByRole('button')).toHaveCount(16);
   await noHorizontalOverflow(kb);
+  await fitsOneScreen(kb); // clue, 4x4 card and Lock in together
   const cell = await card.getByRole('button').first().boundingBox();
   expect(cell!.height).toBeGreaterThanOrEqual(44);
   expect(cell!.width).toBeGreaterThanOrEqual(44);
@@ -178,6 +180,7 @@ test('layouts have no horizontal overflow and pass automated accessibility check
   await api.post('/round/start');
   await expect(kb.getByText('Question 1 of 12')).toBeVisible();
   await noHorizontalOverflow(kb);
+  await fitsOneScreen(kb);
   const qbox = await kb.getByRole('radio').first().boundingBox();
   expect(qbox!.height).toBeGreaterThanOrEqual(44);
   await axe(kb, 'team quick brain');
@@ -203,6 +206,7 @@ test('layouts have no horizontal overflow and pass automated accessibility check
   }
   await expect(kb.getByRole('radio').first()).toBeVisible();
   await noHorizontalOverflow(kb);
+  await fitsOneScreen(kb); // question, options, Double Down and Lock in together
   const live = (await (await kb.request.get('/api/team/me')).json()).live;
   expect(live.doubleAvailable).toBe(true);
   // keyboard: choose an option with the arrow-free Space key, then lock in with Enter on the button

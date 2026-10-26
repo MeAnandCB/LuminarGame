@@ -102,3 +102,15 @@ export async function noHorizontalOverflow(page: Page) {
   });
   expect(o.sw, `scrollWidth ${o.sw} > clientWidth ${o.cw}; wide elements: ${o.wide.join(' | ')}`).toBeLessThanOrEqual(o.cw);
 }
+
+/** A question on a phone must be answerable without scrolling: the page is no taller than the window and Lock in is on screen. */
+export async function fitsOneScreen(page: Page) {
+  const m = await page.evaluate(() => {
+    const de = document.documentElement;
+    const lock = [...document.querySelectorAll('button')].find((b) => /Lock in/.test(b.textContent ?? ''));
+    return { sh: de.scrollHeight, ch: de.clientHeight, vh: window.innerHeight, lockBottom: lock?.getBoundingClientRect().bottom ?? null };
+  });
+  expect(m.sh, 'the question page scrolls vertically').toBeLessThanOrEqual(m.ch + 1);
+  expect(m.lockBottom, 'no Lock in button on the question page').not.toBeNull();
+  expect(m.lockBottom!, 'Lock in button is below the fold').toBeLessThanOrEqual(m.vh);
+}

@@ -337,9 +337,47 @@ label.lbl { display: block; font-size: .85rem; font-weight: 600; color: var(--co
 .logo-b { animation: logo 4s ease-in-out infinite; }
 @keyframes logo { 0%, 100% { box-shadow: 0 0 0 0 rgb(34 211 238 / 0); transform: rotate(0); } 50% { box-shadow: 0 0 22px 2px rgb(34 211 238 / .6); transform: rotate(-6deg); } }
 
-.opt { position: relative; overflow: hidden; animation: tile-in .45s cubic-bezier(.2, .9, .3, 1.2) both; }
+.opt { position: relative; overflow: hidden; justify-content: flex-start; gap: .5rem; min-height: clamp(2.75rem, 7.5dvh, 4rem); padding: .3rem .6rem; text-align: left; font-size: 1rem; line-height: 1.2; overflow-wrap: break-word; animation: tile-in .25s ease-out both; }
 .opt[aria-checked="true"] { transform: scale(1.02); box-shadow: 0 0 22px -2px var(--accent); }
 .opt:active:not(:disabled) { transform: scale(.97); }
+.opt-grid { display: grid; gap: .375rem; }
+.opt-grid-2 { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 350px) { .opt-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ============================================ one-screen phone play layout
+   While a question is open on a phone the page is exactly one screen tall (dvh follows the browser bars):
+   slim top bar, HUD, the question (it scrolls inside its own box only if it is very long), then the options and
+   the Lock in button pinned underneath. Answering never needs the page itself to scroll. */
+html:has(.stage-fit), html:has(.stage-fit) body { overflow: hidden; overscroll-behavior: none; }
+.stage-fit { height: 100vh; height: 100dvh; gap: .375rem; padding-block: max(.5rem, env(safe-area-inset-top)) max(.5rem, env(safe-area-inset-bottom)); }
+.play-fit { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: .375rem; }
+.topbar { flex: none; display: flex; align-items: center; gap: .5rem; min-height: 1.75rem; }
+.topbar-rank { flex: none; padding: .05rem .45rem; border-radius: .5rem; background: var(--color-panel2); font-size: .8rem; font-weight: 800; }
+.dot-ok { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; background: var(--color-ok); box-shadow: 0 0 8px var(--color-ok); }
+
+.hud { flex: none; padding: .4rem .7rem .5rem; }
+.hud-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.hud-kicker { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .7rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; line-height: 1.3; color: var(--accent); }
+.hud .emblem { display: inline; width: auto; height: auto; margin-right: .3rem; border: 0; background: none; box-shadow: none; font-size: 1em; animation: none; vertical-align: baseline; }
+.hud-bar { height: .3rem; margin-top: .4rem; overflow: hidden; border-radius: 999px; background: var(--color-panel2); }
+
+/* The question box takes whatever height is left; the card centres in spare room and scrolls only on overflow. */
+.play-scroll { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: .375rem; overflow-y: auto; overscroll-behavior: contain; padding: .35rem; margin: -.35rem; }
+.play-scroll > * { flex-shrink: 0; }
+.qcard { flex: none; margin-block: auto; padding: .65rem .8rem; }
+.qcard h2 { font-size: .95rem; line-height: 1.25; }
+.qcard .prompt { margin-top: .25rem; font-size: 1rem; line-height: 1.45; }
+.qcard-foot { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-top: .5rem; font-size: .75rem; color: var(--color-muted); }
+.btn-xs { min-height: 2.25rem; padding: .2rem .6rem; font-size: .8rem; border-radius: .55rem; }
+
+.dock { flex: none; display: flex; flex-direction: column; gap: .375rem; }
+.btn-lock { width: 100%; min-height: 3.25rem; font-size: 1.1rem; }
+.dock-note { display: flex; align-items: center; gap: .75rem; padding: .6rem .8rem; }
+
+/* Bingo card: shorter tiles so the clue, the 4x4 card and Lock in all fit together. */
+.stage-fit .bingo-card { gap: .3rem; }
+.stage-fit .bingo-cell { min-height: clamp(2.75rem, 8dvh, 4.5rem); }
+.stage-fit .bingo-icon { font-size: 1.35rem; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
