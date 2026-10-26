@@ -70,6 +70,15 @@ test('complete event: admin, two phones, projector, 5 levels, podium, CSV', asyn
   // ---- 5. Level 1: Tech Faces (live) -----------------------------------------------
   await admin.getByTestId('act-round.prepare').click();
   await expect(a.page.getByText('Waiting for the host to press start')).toBeVisible();
+  // the rules are on the phone and on the projector, in English and in Malayalam
+  for (const screen of [a.page, display]) {
+    const rules = screen.getByTestId('game-rules');
+    await expect(rules.getByRole('heading', { name: 'Rules' })).toBeVisible();
+    await expect(rules.getByRole('heading', { name: 'നിയമങ്ങൾ' })).toBeVisible();
+    await expect(rules.getByText('A tech personality appears')).toBeVisible();
+    await expect(rules.getByText('ടെക് ലോകത്തെ ഒരു പ്രമുഖ വ്യക്തിയുടെ ചിത്രം')).toBeVisible();
+    await expect(rules.locator('[lang="ml"]')).toHaveCount(1);
+  }
   await admin.getByTestId('act-round.start').click();
   await expect(a.page.getByText('Question 1 of 10')).toBeVisible();
   await expect(a.page.getByText('Tech Faces').first()).toBeVisible();

@@ -8,6 +8,7 @@ import { ConfirmDialog, ConnBadge, ErrorBanner, Leaderboard, Spinner } from '../
 import { LivePlay } from './team/LivePlay';
 import { OptionButtons } from '../components/OptionButtons';
 import { Backdrop, Emblem, FINALE_LEVEL, LEVELS, LevelIntro, skinOf, themeFor } from '../components/Backdrop';
+import { BilingualRules } from '../components/Rules';
 import { AnimatedNumber } from '../components/ui';
 
 type Boot = 'loading' | 'anon' | 'in';
@@ -282,13 +283,13 @@ function Screen({ team, pub, live, now }: { team: TeamState; pub: PublicState | 
   if (st === 'ROUND_READY') {
     return (
       <Card title={round.name} icon="🚀" level={round.level}>
-        <p className="text-lg">{round.instructions}</p>
+        <p className="float-dots mb-3 font-bold text-neon">Waiting for the host to press start</p>
+        <BilingualRules kind={round.kind} />
         <ul className="mt-4 list-disc space-y-1 pl-5 text-muted">
           <li>{round.total} questions · {round.kind === 'quiz' ? `${Math.round(round.durationMs / 60000)} minutes, at your own pace` : 'live - everyone answers the same question together'}</li>
           <li>Both teammates can read the screen – only one phone needs to answer.</li>
           <li>Stay on this page until the game ends: the host is told when you switch to another app or tab.</li>
         </ul>
-        <p className="float-dots mt-4 font-bold text-neon">Waiting for the host to press start</p>
       </Card>
     );
   }

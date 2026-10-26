@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
-import { ADMIN, AdminApi, fitsOneScreen, noHorizontalOverflow, registerTeam } from './helpers';
+import { ADMIN, AdminApi, MOBILE, fitsOneScreen, noHorizontalOverflow, registerTeam } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -57,6 +57,22 @@ test('layouts have no horizontal overflow and pass automated accessibility check
   await api.post('/registration/confirm');
   for (const level of [1, 2, 4]) await api.patch(`/round/${level}/config`, { questionSec: 120 }); // keep questions open while the checks run
   await api.post('/round/prepare');
+
+  // ---- a game about to start: the rules in English and Malayalam fit the projector and the phones ----
+  await expect(dp.getByTestId('game-rules')).toBeVisible();
+  await expect(dp.locator('.intro')).toBeHidden(); // the level title card has played
+  await noHorizontalOverflow(dp);
+  const rules = await dp.evaluate(() => ({ sh: document.documentElement.scrollHeight, ch: document.documentElement.clientHeight }));
+  expect(rules.sh, 'rules screen scrolls vertically on the projector').toBeLessThanOrEqual(rules.ch + 2);
+  await axe(dp, 'display rules');
+  for (const width of [320, 375]) {
+    await first.page.setViewportSize({ width, height: 640 });
+    await expect(first.page.getByTestId('game-rules')).toBeVisible();
+    await noHorizontalOverflow(first.page);
+  }
+  await expect(first.page.locator('.intro')).toBeHidden();
+  await axe(first.page, 'phone rules');
+  await first.page.setViewportSize(MOBILE);
   await api.post('/round/start');
 
   // ---- Level 1 (Tech Faces, live) with 20 teams ----------------------------------------------

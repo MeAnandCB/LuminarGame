@@ -79,7 +79,7 @@ Configuration (`.env`, never commit it): `PORT`, `HOST`, `DB_PATH`, `PUBLIC_URL`
 1. **Event tab:** set name, capacity (1 to 60, default 20), auto-approve, live-scores on/off, and **Advancement** (below). **Rounds & scoring:** preview every question (tick *show answer keys*), adjust timers/points/hint penalties, and **edit questions and answers** (below). Scoring and content lock once a round starts.
 2. **Control → Open registration.** The projector shows the PIN and QR code and fills the team slots live (as many as the capacity you set).
 3. **Teams tab:** approve/reject/remove (only before the first round). **Close registration & confirm teams** moves everyone to the lobby.
-4. **Add the Tech Faces photos** (see §5a) before the event, then **Prepare Level 1** (teams see the instructions) → **Start round**. Levels 1, 2, 4 and 5 are live: use **Close question now / Next question** to move at your own pace (or let the timers run), or hand the loop to a coordinator (below). Pause/Resume/End as needed. After a round ends, optionally **Reveal answers** on the projector and phones.
+4. **Add the Tech Faces photos** (see §5a) before the event, then **Prepare Level 1** (the projector and every phone show that game's rules in English and Malayalam, see §5b) → **Start round**. Levels 1, 2, 4 and 5 are live: use **Close question now / Next question** to move at your own pace (or let the timers run), or hand the loop to a coordinator (below). Pause/Resume/End as needed. After a round ends, optionally **Reveal answers** on the projector and phones.
    **Coordinator desk** (`/coordinator`, open it from the admin header or on a second device and sign in with an admin account): during a live round it shows the current question with its answer key, the countdown and how many teams have locked in, with one big button that runs the loop **Reveal answer → Next question → repeat** (the last reveal reads *Finish round*). After the reveal it lists how many teams picked each option, the fastest finger, steals, eliminations and bingos so they can be announced. *Pause/Resume* sit next to the button, *Answers shown/hidden* masks every key if the screen is shared, and before a round starts (and during the self-paced Level 3) it shows the full question-and-answer sheet. The timers still apply: the question closes and the next one opens by themselves unless the round is paused. A tap on a stale screen (the timer moved the game on a moment earlier) is ignored by the server, so it can never skip a reveal.
 5. Repeat for Levels 2 and 3. After Level 4 ends, **Run qualification**: finalists are chosen and announced. You can change the number of finalists, or reopen qualification before Level 5 starts. Level 5 starting **freezes** qualification.
 
@@ -120,6 +120,12 @@ The ten default photos are bundled (downloaded from Wikimedia Commons under free
 
 Any photo that is missing is replaced by a "photo not added" silhouette, so you can rehearse the whole round without them; the dashboard's *Rounds & scoring* tab previews each picture next to its question. To change who appears, edit `server/content/faces.ts` (names, options, the "did you know" text and the picture path), rebuild and create a new event. Use a portrait or square crop with the face in the upper half: pictures are shown with `object-fit: cover`.
 
+### 5b. Rules shown at the start of every game (English and Malayalam)
+
+When the host presses **Prepare** for a level, the room sees that game's rules before anything starts: the projector shows two full-width panels (**Rules** | **നിയമങ്ങൾ**) under the level title, and each phone shows the same lists stacked under "Waiting for the host to press start". The leaderboard returns on the projector with the first question. The text lives in [`shared/rules.ts`](shared/rules.ts), one entry per game with the same number of lines in each language (a unit test checks this), so it applies to events created earlier too. Game words that appear on screen (Level, Lock in, Streak, Double Down, Skip, Steal, lives) stay in English inside the Malayalam, as in the printed Malayalam rules sheet. No point values are written into the text because the host can change them before a round starts; the scoring numbers are in the rules PDFs.
+
+Malayalam needs a Malayalam system font (no web fonts, the event is offline). Current iPhones, Android phones, Macs and Windows 10+ have one; test one older phone before the event.
+
 How a live question works: it is **open** (answers are locked in but *not scored* and correctness is not revealed) → **reveal** (the question is resolved in one transaction: correct answer, answer distribution, bonuses, streaks, lives, steals) → the next question opens automatically. The question closes early when every team still playing has answered. Phases run on the round's pause-safe clock, so pausing freezes the question timer. Skipping *voids* the question (nobody scores, no life lost). Level 1's **Skip** is per team and idempotent; the host can switch it off.
 
 **Answer normalisation** (server side only): Unicode NFKC, trim, collapse whitespace, case-fold. Punctuation and inner characters are preserved (`BALAN-42M` ≠ `BALAN42M`). Numeric answers parse strictly (`42`, `42.0`, `042` match; `4 2`, `1e1` do not). Multiple-choice compares option ids. Alternatives can be listed in a challenge's `answers` array.
@@ -135,7 +141,7 @@ How a live question works: it is **open** (answers are locked in but *not scored
 ## 6. Architecture
 
 ```
-shared/    types + socket event contract used by both sides
+shared/    types + socket event contract used by both sides; rules.ts = the English/Malayalam rules shown before each game
 server/
   game/    pure logic: normalize, scoring, timer, stateMachine, ranking, liveRules, bingo   (unit tested)
   games/   one module per game format: quiz.ts (Level 3), live.ts (Levels 1, 2, 4 and 5: phase machine,
@@ -180,11 +186,11 @@ Extra guards live in the engine: Level 5 can only be prepared from QUALIFICATION
 
 ```bash
 npm run typecheck && npm run lint
-npm test                 # 189 tests: 65 unit + 124 integration
+npm test                 # 193 tests: 69 unit + 124 integration
 npm run build && npm run test:e2e   # 10 Playwright tests in Chromium
 ```
 
-Last full run on macOS (Node 26.5): **189/189 Vitest tests pass, 10/10 Playwright tests pass, typecheck and lint clean.**
+Last full run on macOS (Node 26.5): **193/193 Vitest tests pass, 10/10 Playwright tests pass, typecheck and lint clean.**
 
 * **Unit** (`tests/unit`): normalisation, alternatives, numeric parsing, speed bonus, config validation, timer pause/resume/deadline, ranking and every tie-break step, finalist selection, state machine, **every live scoring rule** (speed, fastest finger, streaks, Double Down, lives, steals, elimination, sudden-death protection) the **Tech Bingo rules** (10 lines on a 4x4 card, per-team shuffles, line detection) and the seeded tech answer keys.
 * **Integration** (`tests/integration`, real HTTP server + Socket.IO + SQLite): admin auth/CSRF/origin/logout/rate limit; socket authorisation; no answer-key leakage; registration limits, duplicate and near-duplicate names, concurrent joins (26 → exactly 20; 46 → exactly 40 once the host raises the capacity), registration closing mid-join; Level 3 (Quick Brain) scoring, **Skip**, hints, retries, duplicates, concurrent submissions, deadline (inclusive), ticker expiry, repeated pause/resume; **Tech Faces and Tech Bingo** (pictures on the public state, hidden-until-reveal marks, per-team cards, lines and blackout paid exactly once, voided calls), **Reel Rush and Final Showdown** (hidden-until-reveal scoring, early close, Double Down, streaks, host advance/skip, pause freezing the question timer, lives/elimination/steals/survivor bonus, restart mid-question, sockets); upgrading a version-1 database in place (including the new round kinds and ledger rows); qualification, freezing and reopening, tie at the cutoff, finalist-only Level 5, podium, CSV and ledger = snapshot = displayed totals; admin adjustments, reset, audit log; DB write failure rolls back and the same request id can be retried; server restart mid-round (paused, remaining time intact), restart after completion; 20 and 40 simultaneous socket submissions.

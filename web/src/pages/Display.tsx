@@ -4,6 +4,7 @@ import { fmtClock, remaining, useLive, useServerNow } from '../lib/realtime';
 import { useOfflineTeams } from '../lib/offlineTeams';
 import { ConnBadge, Leaderboard, MoreTeams, OfflineTeamsContext, PROJECTOR_ROWS, QrImage, Spinner, playingRows } from '../components/ui';
 import { LiveView } from './display/Live';
+import { BilingualRules } from '../components/Rules';
 import { Backdrop, Emblem, FINALE_LEVEL, LEVELS, LevelIntro, skinOf, themeFor } from '../components/Backdrop';
 
 /** "A · B · C · D · +16 more": the first few names, then a count, so the line stays short. */
@@ -189,6 +190,25 @@ function RoundView({ pub, now }: { pub: PublicState; now: number }) {
   const ended = state === 'ROUND_ENDED';
   const unit = 'questions';
   const playing = playingRows(pub.leaderboard, round);
+  if (ready) {
+    // A game is about to start: the room reads the rules, in English and Malayalam, across the full width. The leaderboard returns with the first question.
+    return (
+      <div className="flex flex-1 flex-col gap-[1.2vw]">
+        <section className="panel glow flex flex-wrap items-center justify-between gap-x-[2vw] gap-y-[0.6vw] p-[1vw]">
+          <div>
+            <p className="text-[0.8em] font-bold uppercase tracking-[0.25em] text-[var(--accent)]"><Emblem level={round.level} />Level {round.level}</p>
+            {LEVELS[round.level] && <p className="text-[0.8em] italic text-muted">{LEVELS[round.level]!.tag}</p>}
+            <h2 className="text-[1.7em] font-black leading-tight">{round.name.replace(/^Level \d - /, '')}</h2>
+          </div>
+          <div className="text-right">
+            <div role="timer" aria-label={`Time remaining ${fmtClock(left)}`} className="mono text-[clamp(2.25rem,4vw,5rem)] font-black leading-none text-[var(--accent)]">{fmtClock(round.durationMs)}</div>
+            <p className="text-[1.05em] font-semibold">Get ready – waiting for the host to start</p>
+          </div>
+        </section>
+        <BilingualRules kind={round.kind} wide />
+      </div>
+    );
+  }
   return (
     <div className="grid flex-1 grid-cols-1 gap-[1.6vw] lg:grid-cols-[minmax(0,4fr)_minmax(0,7fr)]">
       <section className="flex flex-col gap-[0.8vw]">
@@ -197,10 +217,9 @@ function RoundView({ pub, now }: { pub: PublicState; now: number }) {
           {LEVELS[round.level] && <p className="text-[0.8em] italic text-muted">{LEVELS[round.level]!.tag}</p>}
           <h2 className="text-[1.9em] font-black leading-tight">{round.name.replace(/^Level \d - /, '')}</h2>
           <div role="timer" aria-label={`Time remaining ${fmtClock(left)}`} className={`mono my-[0.5vw] text-[clamp(3.5rem,7vw,9rem)] font-black leading-none ${paused ? 'text-warn' : left < 30000 && state === 'ROUND_RUNNING' ? 'urgent text-bad' : 'text-[var(--accent)]'}`}>
-            {ready ? fmtClock(round.durationMs) : ended ? '0:00' : fmtClock(left)}
+            {ended ? '0:00' : fmtClock(left)}
           </div>
           <p className="text-[1.05em] font-semibold">
-            {ready && 'Get ready – waiting for the host to start'}
             {state === 'ROUND_RUNNING' && 'Round in progress'}
             {paused && '⏸ PAUSED by the host'}
             {ended && "🏁 Time's up – round complete"}
