@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { LeaderboardRow, PublicState } from '../../../shared/types';
 import { fmtClock, remaining, useLive, useServerNow } from '../lib/realtime';
 import { useOfflineTeams } from '../lib/offlineTeams';
-import { ConnBadge, Leaderboard, OfflineTeamsContext, QrImage, Spinner, playingRows } from '../components/ui';
+import { ConnBadge, Leaderboard, MoreTeams, OfflineTeamsContext, PROJECTOR_ROWS, QrImage, Spinner, playingRows } from '../components/ui';
 import { LiveView } from './display/Live';
 import { Backdrop, Emblem, FINALE_LEVEL, LEVELS, LevelIntro, skinOf, themeFor } from '../components/Backdrop';
 
@@ -103,11 +103,14 @@ function Body({ pub, now }: { pub: PublicState; now: number }) {
 
 function Slots({ pub }: { pub: PublicState }) {
   const rows = [...pub.leaderboard].sort((a, b) => a.name.localeCompare(b.name));
-  const slots = Array.from({ length: pub.counts.capacity }, (_, i) => rows[i] ?? null);
+  const total = Math.max(pub.counts.capacity, rows.length);
+  // Up to 24 slots keep the roomy 4-column grid; a bigger room switches to 6 compact columns so 60 slots still fit the screen.
+  const big = total > 24;
+  const slots = Array.from({ length: total }, (_, i) => rows[i] ?? null);
   return (
-    <ul className="grid grid-cols-2 gap-[0.5vw] lg:grid-cols-4" aria-label="Team slots">
+    <ul className={`grid grid-cols-2 gap-[0.5vw] ${big ? 'text-[0.8em] lg:grid-cols-6' : 'lg:grid-cols-4'}`} aria-label="Team slots">
       {slots.map((r, i) => (
-        <li key={i} className={`${r ? 'joined' : ''} flex items-center gap-2 rounded-xl border px-3 py-[0.5vw] ${r ? 'border-neon/60 bg-panel2' : 'border-dashed border-line text-muted'}`}>
+        <li key={i} className={`${r ? 'joined' : ''} flex items-center gap-2 rounded-xl border px-3 ${big ? 'py-[0.3vw]' : 'py-[0.5vw]'} ${r ? 'border-neon/60 bg-panel2' : 'border-dashed border-line text-muted'}`}>
           <span className="mono text-[0.7em] text-muted">{String(i + 1).padStart(2, '0')}</span>
           <span className="truncate font-semibold">{r ? r.name : 'open slot'}</span>
           {r && <span aria-label={r.connected ? 'connected' : 'offline'} className={`ml-auto text-[0.8em] ${r.connected ? 'beat text-ok' : 'text-warn'}`}>{r.connected ? '●' : '◌'}</span>}
@@ -158,16 +161,22 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function BoardColumns({ rows, pub, showProgress, dense }: { rows: LeaderboardRow[]; pub: PublicState; showProgress?: boolean; dense?: boolean }) {
+function BoardColumns({ rows: all, pub, showProgress, dense }: { rows: LeaderboardRow[]; pub: PublicState; showProgress?: boolean; dense?: boolean }) {
+  const rows = all.slice(0, PROJECTOR_ROWS); // a bigger field would scroll the projector, so show the top of the table
   const split = rows.length > 10;
   const half = Math.ceil(rows.length / 2);
-  return split ? (
-    <div className="grid grid-cols-1 gap-[1vw] min-[1100px]:grid-cols-2">
-      <Leaderboard big={!dense} dense={dense} hideOffline rows={rows.slice(0, half)} hidden={pub.scoresHidden} showProgress={showProgress} />
-      <Leaderboard big={!dense} dense={dense} hideOffline rows={rows.slice(half)} hidden={pub.scoresHidden} showProgress={showProgress} provisional={pub.provisional} />
-    </div>
-  ) : (
-    <Leaderboard big={!dense} dense={dense} hideOffline rows={rows} hidden={pub.scoresHidden} showProgress={showProgress} provisional={pub.provisional} />
+  return (
+    <>
+      {split ? (
+        <div className="grid grid-cols-1 gap-[1vw] min-[1100px]:grid-cols-2">
+          <Leaderboard big={!dense} dense={dense} hideOffline rows={rows.slice(0, half)} hidden={pub.scoresHidden} showProgress={showProgress} />
+          <Leaderboard big={!dense} dense={dense} hideOffline rows={rows.slice(half)} hidden={pub.scoresHidden} showProgress={showProgress} provisional={pub.provisional} />
+        </div>
+      ) : (
+        <Leaderboard big={!dense} dense={dense} hideOffline rows={rows} hidden={pub.scoresHidden} showProgress={showProgress} provisional={pub.provisional} />
+      )}
+      <MoreTeams total={all.length} />
+    </>
   );
 }
 

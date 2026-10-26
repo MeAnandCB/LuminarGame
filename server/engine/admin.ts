@@ -1,10 +1,11 @@
 import crypto from 'node:crypto';
 import { isLive, liveDurationSec, parseRoundConfig } from '../game/scoring.js';
-import { AppError, type Ctx, type TeamRow } from './context.js';
+import { ChallengeEditError, applyEdit, applyTileEdit, type EditPatch, type EditableOption } from '../game/challengeEdit.js';
+import { AppError, type ChallengeRow, type Ctx, type TeamRow } from './context.js';
 import { award } from '../games/shared.js';
 import { applyCutoff } from './cutoff.js';
 import { computeStandings, qualificationVisible, writeSnapshot } from './standings.js';
-import type { RoundConfig } from '../../shared/types.js';
+import type { RoundConfig, RoundKind } from '../../shared/types.js';
 
 export function adjustScore(ctx: Ctx, actor: string, teamId: number, points: number, reason: string): number {
   const ev = ctx.requireEvent();
@@ -44,15 +45,65 @@ export function updateRoundConfig(ctx: Ctx, actor: string, level: number, patch:
   return next;
 }
 
-export function updateChallenge(ctx: Ctx, actor: string, challengeId: number, patch: { points?: number; hint?: string | null }): void {
+export interface ChallengePatch extends EditPatch {
+  points?: number;
+  hint?: string | null;
+}
+
+/** Runs a pure edit and reports its complaints to the host as HTTP 400. */
+function editOr400<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    if (e instanceof ChallengeEditError) throw new AppError(400, 'BAD_QUESTION', e.message);
+    throw e;
+  }
+}
+
+const parseOptions = (c: ChallengeRow): EditableOption[] | null => (c.options ? (JSON.parse(c.options) as EditableOption[]) : null);
+
+/** Edits one question: its wording, option texts, correct answer(s), points and hint. Only before its round starts. */
+export function updateChallenge(ctx: Ctx, actor: string, challengeId: number, patch: ChallengePatch): void {
   const ev = ctx.requireEvent();
-  const row = ctx.db.get<{ id: number; round_id: number; status: string; event_id: number }>('SELECT c.id, c.round_id, r.status, r.event_id FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE c.id = ?', challengeId);
+  const row = ctx.db.get<ChallengeRow & { status: string; event_id: number; round_kind: RoundKind; level: number }>(
+    'SELECT c.*, r.status, r.event_id, r.kind AS round_kind, r.level FROM challenges c JOIN rounds r ON r.id = c.round_id WHERE c.id = ?',
+    challengeId,
+  );
   if (!row || row.event_id !== ev.id) throw new AppError(404, 'NO_CHALLENGE', 'Challenge not found.');
-  if (row.status !== 'pending') throw new AppError(409, 'LOCKED', 'Points cannot change once a round has started.');
+  if (row.status !== 'pending') throw new AppError(409, 'LOCKED', 'Questions, answers and points cannot change once a round has started.');
+  const before = { title: row.title, prompt: row.prompt, options: parseOptions(row), answers: JSON.parse(row.answers) as string[] };
+  const after = editOr400(() => applyEdit({ kind: row.kind, ...before }, row.round_kind, patch));
+  const changed = (['title', 'prompt', 'options', 'answers'] as const).filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
   ctx.db.tx(() => {
+    if (changed.length > 0) {
+      ctx.db.run('UPDATE challenges SET title = ?, prompt = ?, options = ?, answers = ? WHERE id = ?', after.title, after.prompt, after.options ? JSON.stringify(after.options) : null, JSON.stringify(after.answers), challengeId);
+    }
     if (patch.points !== undefined) ctx.db.run('UPDATE challenges SET points = ? WHERE id = ?', patch.points, challengeId);
     if (patch.hint !== undefined) ctx.db.run('UPDATE challenges SET hint = ? WHERE id = ?', patch.hint && patch.hint.trim() ? patch.hint.trim() : null, challengeId);
-    ctx.audit(ev.id, actor, 'challenge.update', { challengeId, ...patch });
+    ctx.audit(ev.id, actor, 'challenge.update', {
+      challengeId,
+      level: row.level,
+      ...(patch.points !== undefined ? { points: patch.points } : {}),
+      ...(patch.hint !== undefined ? { hint: patch.hint } : {}),
+      ...(changed.length > 0 ? { changed, before: Object.fromEntries(changed.map((k) => [k, before[k]])), after: Object.fromEntries(changed.map((k) => [k, after[k]])) } : {}),
+    });
+  });
+  ctx.emit({ teams: 'all' });
+}
+
+/** Renames the 16 shared Tech Bingo tiles (the card every team holds). The letters stay, so calls and cards still line up. */
+export function updateBingoTiles(ctx: Ctx, actor: string, level: number, tiles: { id: string; text: string; icon: string }[]): void {
+  const ev = ctx.requireEvent();
+  const round = ctx.rounds(ev.id).find((r) => r.level === level);
+  if (!round) throw new AppError(404, 'NO_ROUND', 'Unknown level.');
+  if (round.kind !== 'bingo') throw new AppError(409, 'NOT_BINGO', 'Only the Tech Bingo round has tiles.');
+  if (round.status !== 'pending') throw new AppError(409, 'LOCKED', 'Tiles cannot change once a round has started.');
+  const calls = ctx.challenges(round.id);
+  const current = parseOptions(calls[0]!) ?? [];
+  const next = editOr400(() => applyTileEdit(current, tiles));
+  ctx.db.tx(() => {
+    for (const c of calls) ctx.db.run('UPDATE challenges SET options = ? WHERE id = ?', JSON.stringify(next), c.id);
+    ctx.audit(ev.id, actor, 'bingo.tiles', { level, tiles: next.map((t) => `${t.icon} ${t.text}`) });
   });
   ctx.emit({ teams: 'all' });
 }

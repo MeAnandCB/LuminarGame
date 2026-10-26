@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { MAX_ANSWER_LENGTH } from '../../shared/contract.js';
-import { CUTOFF_LEVELS } from '../../shared/types.js';
+import { CUTOFF_LEVELS, MAX_TEAMS } from '../../shared/types.js';
 
 const clean = (s: string) => s.normalize('NFKC').replace(/\s+/g, ' ').trim();
 const label = (min: number, max: number) =>
@@ -49,10 +49,10 @@ export const updateEventSchema = z.object({
   pin: pinSchema.optional(),
   settings: z
     .object({
-      maxTeams: z.number().int().min(1).max(20),
+      maxTeams: z.number().int().min(1).max(MAX_TEAMS),
       autoApprove: z.boolean(),
-      finalists: z.number().int().min(1).max(20),
-      advance: z.array(z.number().int().min(1).max(20).nullable()).length(CUTOFF_LEVELS.length),
+      finalists: z.number().int().min(1).max(MAX_TEAMS),
+      advance: z.array(z.number().int().min(1).max(MAX_TEAMS).nullable()).length(CUTOFF_LEVELS.length),
       liveScores: z.boolean(),
     })
     .partial()
@@ -90,7 +90,21 @@ export const configPatchSchema = z
   .partial()
   .strict();
 
-export const challengePatchSchema = z.object({ points: z.number().int().min(0).max(5000).optional(), hint: z.string().max(300).nullable().optional() }).strict();
+const optionId = z.string().regex(/^[a-z0-9]{1,3}$/);
+// Wording is trimmed and checked again by game/challengeEdit.ts; these bounds only keep absurd payloads out.
+export const challengePatchSchema = z
+  .object({
+    points: z.number().int().min(0).max(5000),
+    hint: z.string().max(300).nullable(),
+    title: z.string().max(200),
+    prompt: z.string().max(2000),
+    options: z.array(z.object({ id: optionId, text: z.string().max(400) }).strict()).min(2).max(20),
+    answers: z.array(z.string().max(400)).min(1).max(20),
+  })
+  .partial()
+  .strict();
+
+export const bingoTilesSchema = z.object({ tiles: z.array(z.object({ id: optionId, text: z.string().max(200), icon: z.string().max(60) }).strict()).min(2).max(64) }).strict();
 
 /** `expect` is the question and phase the coordinator was looking at; a click on a stale screen is ignored instead of skipping a phase. */
 export const liveAdvanceSchema = z.object({ expect: z.object({ index: z.number().int().min(0), phase: z.enum(['open', 'reveal']) }).optional() }).strict();

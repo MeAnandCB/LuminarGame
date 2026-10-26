@@ -147,6 +147,25 @@ describe('real-time sync', () => {
   });
 });
 
+describe('a field larger than the old 20-team cap', () => {
+  it('40 teams submitting at the same moment are all scored exactly once', async () => {
+    b = await boot();
+    const { admin, teams } = await setupEvent(b, { teams: 40, settings: { maxTeams: 40 } });
+    await admin.post('/api/admin/registration/confirm');
+    await skipIntroRounds(admin);
+    await admin.post('/api/admin/round/prepare');
+    await admin.post('/api/admin/round/start');
+    const socks = await Promise.all(teams.map((t) => connectSocket(b, { role: 'team' }, t.cookieHeader)));
+    const acks = await Promise.all(socks.map((s, i) => emitAck<AnswerResult>(s, C2S.submitAnswer, { requestId: `burst40-${i}-aaaaaaaa`, answer: correct(3, 0) })));
+    expect(acks.every((a) => a.ok && a.result!.outcome === 'correct')).toBe(true);
+    const s = await adminState(admin);
+    expect(s.leaderboard).toHaveLength(40);
+    expect(s.leaderboard.every((r) => r.total === 110)).toBe(true);
+    expect(b.h.ctx.db.get<{ n: number }>("SELECT COUNT(*) n FROM score_ledger WHERE kind='answer'")!.n).toBe(40);
+    socks.forEach((x) => x.close());
+  });
+});
+
 describe('persistence and recovery', () => {
   it('a server restart mid-round keeps scores, sessions and remaining time (round resumes paused)', async () => {
     b = await boot();

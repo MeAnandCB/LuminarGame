@@ -65,6 +65,9 @@ export interface RoundConfig {
   blackoutBonus: number;
 }
 
+/** The most teams one event can hold (the host picks the real capacity, up to this, in the Event tab). */
+export const MAX_TEAMS = 60;
+
 /** Levels after which the host may cut the field. The cut after Level 4 is the finalist qualification (`finalists`). */
 export const CUTOFF_LEVELS = [1, 2, 3] as const;
 
@@ -283,7 +286,7 @@ export interface AdminChallenge {
   kind: ChallengeKind;
   title: string;
   prompt: string;
-  options: { id: string; text: string }[] | null;
+  options: { id: string; text: string; icon?: string }[] | null;
   answers: string[];
   points: number;
   hint: string | null;

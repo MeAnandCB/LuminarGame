@@ -63,6 +63,20 @@ describe('registration', () => {
     expect(b.h.ctx.db.get<{ n: number }>('SELECT COUNT(*) n FROM teams')!.n).toBe(20);
   });
 
+  it('capacity can be raised above 20, up to the 60-team ceiling, and the larger cap holds under concurrent joins', async () => {
+    b = await boot();
+    const { admin, pin } = await setupEvent(b, { settings: { maxTeams: 40 } });
+    expect((await adminState(admin)).event.settings.maxTeams).toBe(40);
+    expect((await adminState(admin)).counts.capacity).toBe(40);
+    const results = await Promise.all(Array.from({ length: 46 }, (_, i) => new TeamClient(b.base).join(pin, `Squad ${i}`)));
+    expect(results.filter((r) => r.status === 201)).toHaveLength(40);
+    expect(results.filter((r) => r.status === 409 && r.json.error.code === 'EVENT_FULL')).toHaveLength(6);
+    expect((await admin.patch('/api/admin/event', { settings: { maxTeams: 60 } })).status).toBe(200);
+    expect((await admin.patch('/api/admin/event', { settings: { maxTeams: 61 } })).status).toBe(400);
+    expect((await admin.patch('/api/admin/event', { settings: { maxTeams: 39 } })).status).toBe(409); // 40 are already in
+    expect((await new TeamClient(b.base).join(pin, 'Late Arrival')).status).toBe(201); // the raised cap frees a slot
+  });
+
   it('concurrent joins with the same name create exactly one team', async () => {
     b = await boot();
     const { pin } = await setupEvent(b);

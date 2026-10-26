@@ -255,6 +255,10 @@ export function createApp(opts: AppOptions): AppHandle {
   adm.patch('/round/:level/config', (req, res) => {
     res.json(admin.updateRoundConfig(ctx, actor(req), Number(req.params.level), S.configPatchSchema.parse(req.body)));
   });
+  adm.patch('/round/:level/tiles', (req, res) => {
+    admin.updateBingoTiles(ctx, actor(req), Number(req.params.level), S.bingoTilesSchema.parse(req.body).tiles);
+    ok(res);
+  });
   adm.patch('/challenges/:id', (req, res) => {
     admin.updateChallenge(ctx, actor(req), Number(req.params.id), S.challengePatchSchema.parse(req.body));
     ok(res);

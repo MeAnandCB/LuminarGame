@@ -1,5 +1,5 @@
 import type { LeaderboardRow, LiveOption, LivePublic, PublicState } from '../../../../shared/types';
-import { Leaderboard, playingRows } from '../../components/ui';
+import { Leaderboard, MoreTeams, PROJECTOR_ROWS, playingRows } from '../../components/ui';
 import { Emblem, LEVELS } from '../../components/Backdrop';
 import { FaceImage } from '../../components/FaceImage';
 import { BingoBoard } from '../../components/BingoCard';
@@ -46,7 +46,8 @@ export function LiveView({ pub, now }: { pub: PublicState; now: number }) {
   const round = pub.round!;
   const paused = pub.event!.state === 'ROUND_PAUSED';
   const r = q.reveal;
-  const rows: LeaderboardRow[] = playingRows(pub.leaderboard, round);
+  const playing: LeaderboardRow[] = playingRows(pub.leaderboard, round);
+  const rows = playing.slice(0, PROJECTOR_ROWS); // a bigger field would scroll the projector: show the top of the table
   const half = Math.ceil(rows.length / 2);
   const split = rows.length > 9;
   const isBingo = round.kind === 'bingo' && !!q.bingo;
@@ -141,6 +142,7 @@ export function LiveView({ pub, now }: { pub: PublicState; now: number }) {
         ) : (
           <Leaderboard big hideOffline rows={rows} hidden={pub.scoresHidden} provisional={pub.provisional} />
         )}
+        <MoreTeams total={playing.length} />
         {pub.recent.length > 0 && (
           <ul className="mt-1 space-y-0.5 text-[0.85em]" aria-label="Recent score changes">
             {pub.recent.slice(0, 3).map((c) => (

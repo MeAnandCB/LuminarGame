@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { CUTOFF_LEVELS, type AdminChallenge, type AdminRound, type AdminState, type AdminTeam, type EventSettings, type RoundConfig } from '../../../shared/types';
+import { CUTOFF_LEVELS, MAX_TEAMS, type AdminChallenge, type AdminRound, type AdminState, type AdminTeam, type EventSettings, type RoundConfig } from '../../../shared/types';
 import { advancementProblem } from '../../../shared/advancement';
 import { AWAY_GRACE_MS } from '../../../shared/contract';
 import { ApiFailure, api, errMsg } from '../lib/api';
@@ -375,6 +375,7 @@ function Rounds({ s, act }: { s: AdminState; act: <T>(fn: () => Promise<T>) => P
   return (
     <div className="flex flex-col gap-4">
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={keys} onChange={(e) => setKeys(e.target.checked)} /> Show answer keys (hide when the projector is mirrored!)</label>
+      <p className="text-sm text-muted">Tick “Show answer keys” to edit a question and its answer. Questions, answers and tiles can be changed until their round starts. Edits belong to this event: <em>Reset event</em> keeps them, a brand-new event starts again from the built-in questions.</p>
       {s.rounds.map((r) => (
         <section key={r.id} className="panel p-4" aria-labelledby={`r${r.level}`}>
           <button className="flex w-full items-center justify-between text-left" aria-expanded={open === r.level} onClick={() => setOpen(open === r.level ? 0 : r.level)}>
@@ -445,20 +446,56 @@ function RoundEditor({ r, keys, act }: { r: AdminRound; keys: boolean; act: <T>(
         <div className="flex items-end"><button className="btn btn-primary btn-sm w-full" disabled={locked || !dirty}>Save scoring</button></div>
       </form>
       {r.kind !== 'quiz' && <p className="text-sm text-muted">Round length is calculated automatically: {r.challenges.length} questions × ({cfg.questionSec}s + {cfg.revealSec}s) ≈ {Math.ceil((r.challenges.length * (cfg.questionSec + cfg.revealSec)) / 60)} minutes.</p>}
+      {r.kind === 'bingo' && <BingoTiles r={r} locked={locked} act={act} />}
       <div>
-        <h3 className="mb-2 font-bold">Questions ({r.challenges.length}) – preview</h3>
+        <h3 className="mb-2 font-bold">Questions ({r.challenges.length})</h3>
         <ol className="space-y-2">
-          {r.challenges.map((c) => <ChallengeRowEditor key={c.id} c={c} keys={keys} locked={locked} act={act} quiz={r.kind === 'quiz'} bingo={r.kind === 'bingo'} />)}
+          {r.challenges.map((c) => <ChallengeRowEditor key={c.id} c={c} keys={keys} locked={locked} act={act} kind={r.kind} sharedTile={r.kind === 'bingo' && r.challenges.some((o) => o.id !== c.id && o.answers[0] === c.answers[0])} />)}
         </ol>
       </div>
     </div>
   );
 }
 
-function ChallengeRowEditor({ c, keys, locked, act, quiz, bingo }: { c: AdminChallenge; keys: boolean; locked: boolean; act: <T>(fn: () => Promise<T>) => Promise<T | undefined>; quiz: boolean; bingo: boolean }) {
+type Act = <T>(fn: () => Promise<T>) => Promise<T | undefined>;
+
+/** Saves through act() (so the dashboard refreshes) but keeps a server complaint next to the form instead of in the banner at the top of a long page. */
+function useSave(act: Act) {
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  async function save(call: () => Promise<unknown>): Promise<boolean> {
+    setError(null);
+    setSaving(true);
+    try {
+      const done = await act(async () => {
+        try {
+          await call();
+          return true;
+        } catch (e) {
+          if (e instanceof ApiFailure && e.status === 401) throw e; // act() signs the host out
+          setError(errMsg(e));
+          return false;
+        }
+      });
+      return done === true;
+    } finally {
+      setSaving(false);
+    }
+  }
+  return { error, saving, save };
+}
+
+const optLabel = (id: string) => id.toUpperCase();
+
+function ChallengeRowEditor({ c, keys, locked, act, kind, sharedTile }: { c: AdminChallenge; keys: boolean; locked: boolean; act: Act; kind: AdminRound['kind']; sharedTile: boolean }) {
+  const quiz = kind === 'quiz';
+  const bingo = kind === 'bingo';
   const [points, setPoints] = useState(c.points);
   const [hint, setHint] = useState(c.hint ?? '');
+  const [editing, setEditing] = useState(false);
   useEffect(() => { setPoints(c.points); setHint(c.hint ?? ''); }, [c.points, c.hint]);
+  // The edit form shows the answer key, so it closes when the keys are hidden again or the round starts.
+  useEffect(() => { if (!keys || locked) setEditing(false); }, [keys, locked]);
   const answer = c.kind === 'choice' ? c.answers.map((a) => c.options?.find((o) => o.id === a)?.text ?? a).join(', ') : c.answers.join(' | ');
   const dirty = points !== c.points || hint !== (c.hint ?? '');
   return (
@@ -473,8 +510,12 @@ function ChallengeRowEditor({ c, keys, locked, act, quiz, bingo }: { c: AdminCha
         <div className="min-w-0 flex-1">
           <p className="font-semibold">{c.position + 1}. {c.title} <span className="badge ml-1">{c.kind}</span></p>
           <p className="prompt mt-1 text-sm text-muted">{c.prompt}</p>
-          {c.options && !bingo && <p className="mt-1 text-sm">{c.options.map((o) => `${o.id.toUpperCase()}) ${o.text}`).join('   ')}</p>}
-          <p className="mt-1 text-sm">{keys ? <>Answer: <strong className="mono text-ok">{answer}</strong>{c.hint && !quiz ? <span className="text-muted"> · {c.hint}</span> : null}</> : <span className="text-muted">Answer hidden</span>}</p>
+          {c.options && !bingo && <p className="mt-1 text-sm">{c.options.map((o) => `${optLabel(o.id)}) ${o.text}`).join('   ')}</p>}
+          <p className="mt-1 text-sm">{keys ? <>Answer: <strong className="mono text-ok">{answer}</strong>{c.hint && !quiz ? <span className="text-muted"> · {c.hint}</span> : null}{sharedTile && <span className="badge badge-warn ml-2" title="Two calls name the same tile; the round cannot start until each call names a different one">⚠ same tile as another call</span>}</> : <span className="text-muted">Answer hidden</span>}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button className="btn btn-ghost btn-sm" aria-expanded={editing} disabled={locked || !keys} onClick={() => setEditing(!editing)} data-testid={`edit-${c.id}`}>{editing ? 'Close editor' : `✎ Edit ${bingo ? 'clue' : 'question'} & answer`}</button>
+            {!keys && !locked && <span className="text-xs text-muted">Tick “Show answer keys” above to edit.</span>}
+          </div>
         </div>
         <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); void act(() => api('PATCH', `/admin/challenges/${c.id}`, { points, hint: hint || null })); }}>
           <div className="w-24"><label className="lbl" htmlFor={`p${c.id}`}>Points</label><input id={`p${c.id}`} type="number" min={0} max={5000} className="field !min-h-10" disabled={locked} value={Number.isFinite(points) ? points : ''} onChange={(e) => setPoints(Number(e.target.value))} /></div>
@@ -482,7 +523,117 @@ function ChallengeRowEditor({ c, keys, locked, act, quiz, bingo }: { c: AdminCha
           <button className="btn btn-ghost btn-sm" disabled={locked || !dirty}>Save</button>
         </form>
       </div>
+      {editing && <QuestionEditor c={c} kind={kind} act={act} onDone={() => setEditing(false)} />}
     </li>
+  );
+}
+
+/** Edit form for one question: wording, option texts, which option is correct (or the accepted answers), and the faces fun fact. */
+function QuestionEditor({ c, kind, act, onDone }: { c: AdminChallenge; kind: AdminRound['kind']; act: Act; onDone: () => void }) {
+  const bingo = kind === 'bingo';
+  const faces = kind === 'faces';
+  const [title, setTitle] = useState(c.title);
+  const [prompt, setPrompt] = useState(c.prompt);
+  const [optText, setOptText] = useState<Record<string, string>>(() => Object.fromEntries((c.options ?? []).map((o) => [o.id, o.text])));
+  const [correct, setCorrect] = useState(c.answers[0] ?? '');
+  const [lines, setLines] = useState(c.answers.join('\n'));
+  const [fact, setFact] = useState(c.hint ?? '');
+  const { error, saving, save } = useSave(act);
+  const id = `qe${c.id}`;
+
+  const patch: Record<string, unknown> = {};
+  if (title !== c.title) patch.title = title;
+  if (prompt !== c.prompt) patch.prompt = prompt;
+  if (c.kind === 'choice' && !bingo && (c.options ?? []).some((o) => optText[o.id] !== o.text)) patch.options = (c.options ?? []).map((o) => ({ id: o.id, text: optText[o.id] ?? o.text }));
+  if (c.kind === 'choice') {
+    if (c.answers.length !== 1 || correct !== c.answers[0]) patch.answers = [correct];
+  } else {
+    const list = lines.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (JSON.stringify(list) !== JSON.stringify(c.answers)) patch.answers = list;
+  }
+  if (faces && fact !== (c.hint ?? '')) patch.hint = fact.trim() ? fact : null;
+  const changed = Object.keys(patch).length > 0;
+
+  return (
+    <form
+      className="mt-3 flex flex-col gap-3 rounded-xl border border-violet/50 bg-ink/50 p-3"
+      aria-label={`Edit ${c.title}`}
+      onSubmit={async (e) => { e.preventDefault(); if (await save(() => api('PATCH', `/admin/challenges/${c.id}`, patch))) onDone(); }}
+    >
+      <div className="grid gap-3 sm:grid-cols-[1fr_3fr]">
+        <div><label className="lbl" htmlFor={`${id}-t`}>Title (host only)</label><input id={`${id}-t`} className="field" maxLength={60} required value={title} onChange={(e) => setTitle(e.target.value)} /></div>
+        <div><label className="lbl" htmlFor={`${id}-p`}>{bingo ? 'Clue the host reads out' : 'Question teams see'}</label><textarea id={`${id}-p`} className="field min-h-20" maxLength={500} required value={prompt} onChange={(e) => setPrompt(e.target.value)} /></div>
+      </div>
+
+      {c.kind === 'choice' && !bingo && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="lbl">Options: type the text and pick the correct one</legend>
+          {(c.options ?? []).map((o) => (
+            <div key={o.id} className="flex items-center gap-2">
+              <input type="radio" className="h-6 w-6 shrink-0" name={`${id}-ok`} checked={correct === o.id} onChange={() => setCorrect(o.id)} aria-label={`Option ${optLabel(o.id)} is the correct answer`} />
+              <span className="mono w-6 shrink-0 text-muted" aria-hidden="true">{optLabel(o.id)}</span>
+              <input className="field !min-h-10" maxLength={80} required aria-label={`Option ${optLabel(o.id)} text`} value={optText[o.id] ?? ''} onChange={(e) => setOptText({ ...optText, [o.id]: e.target.value })} />
+            </div>
+          ))}
+        </fieldset>
+      )}
+      {bingo && (
+        <div>
+          <label className="lbl" htmlFor={`${id}-tile`}>The tile this clue describes</label>
+          <select id={`${id}-tile`} className="field" value={correct} onChange={(e) => setCorrect(e.target.value)}>
+            {(c.options ?? []).map((o) => <option key={o.id} value={o.id}>{`${o.icon ?? ''} ${o.text}`.trim()}</option>)}
+          </select>
+        </div>
+      )}
+      {c.kind !== 'choice' && (
+        <div>
+          <label className="lbl" htmlFor={`${id}-a`}>{c.kind === 'number' ? 'Correct number(s): one per line, digits only (e.g. 2007)' : 'Accepted answer(s): one per line, capitals and spacing do not matter'}</label>
+          <textarea id={`${id}-a`} className="field mono min-h-20" required value={lines} onChange={(e) => setLines(e.target.value)} />
+        </div>
+      )}
+      {faces && (
+        <div>
+          <label className="lbl" htmlFor={`${id}-f`}>“Did you know” shown after the reveal (optional)</label>
+          <input id={`${id}-f`} className="field" maxLength={300} value={fact} onChange={(e) => setFact(e.target.value)} />
+          {c.image && <p className="mt-1 text-xs text-muted">The picture is <span className="mono">web/public{c.image}.jpg</span>: replace that file (and rebuild) to change it.</p>}
+        </div>
+      )}
+
+      {error && <p role="alert" className="rounded-lg border border-bad px-3 py-2 text-sm text-[#ffd5dc]">{error}</p>}
+      <div className="flex flex-wrap gap-2">
+        <button className="btn btn-primary btn-sm" disabled={saving || !changed}>{saving ? 'Saving…' : 'Save question'}</button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onDone}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+/** The 16 tiles every team holds on its Tech Bingo card. Their letters stay; the name and emoji can change. */
+function BingoTiles({ r, locked, act }: { r: AdminRound; locked: boolean; act: Act }) {
+  const saved = (r.challenges[0]?.options ?? []).map((t) => ({ id: t.id, text: t.text, icon: t.icon ?? '' }));
+  const savedJson = JSON.stringify(saved);
+  const [tiles, setTiles] = useState(saved);
+  useEffect(() => setTiles(JSON.parse(savedJson)), [savedJson]);
+  const { error, saving, save } = useSave(act);
+  const change = (id: string, field: 'text' | 'icon', value: string) => setTiles((all) => all.map((t) => (t.id === id ? { ...t, [field]: value } : t)));
+  return (
+    <details className="rounded-xl border border-line p-3">
+      <summary className="cursor-pointer font-bold">Bingo tiles ({tiles.length}): the names on every team&apos;s card</summary>
+      <form className="mt-3 flex flex-col gap-3" aria-label="Bingo tiles" onSubmit={(e) => { e.preventDefault(); void save(() => api('PATCH', `/admin/round/${r.level}/tiles`, { tiles })); }}>
+        <p className="text-sm text-muted">Each clue below points at one of these tiles. Renaming a tile changes it on every clue and every card.</p>
+        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {tiles.map((t) => (
+            <li key={t.id} className="flex items-center gap-2">
+              <span className="mono w-5 text-muted" aria-hidden="true">{optLabel(t.id)}</span>
+              <input className="field !min-h-10 !w-16 shrink-0 text-center" maxLength={12} aria-label={`Tile ${optLabel(t.id)} emoji`} disabled={locked} value={t.icon} onChange={(e) => change(t.id, 'icon', e.target.value)} />
+              <input className="field !min-h-10 min-w-0" maxLength={24} required aria-label={`Tile ${optLabel(t.id)} name`} disabled={locked} value={t.text} onChange={(e) => change(t.id, 'text', e.target.value)} />
+            </li>
+          ))}
+        </ul>
+        {error && <p role="alert" className="rounded-lg border border-bad px-3 py-2 text-sm text-[#ffd5dc]">{error}</p>}
+        <div><button className="btn btn-primary btn-sm" disabled={locked || saving || JSON.stringify(tiles) === savedJson}>{saving ? 'Saving…' : 'Save tiles'}</button></div>
+      </form>
+    </details>
   );
 }
 
@@ -589,7 +740,7 @@ function Advancement({ s, set, setSet }: { s: AdminState; set: EventSettings; se
                   {cut || r.level === QUALIFY_LEVEL ? (
                     <span className="flex items-center gap-2">
                       <input
-                        type="number" min={1} max={20} className="field !min-h-10 w-24" placeholder={cut ? 'All' : undefined}
+                        type="number" min={1} max={MAX_TEAMS} className="field !min-h-10 w-24" placeholder={cut ? 'All' : undefined}
                         aria-label={r.level === QUALIFY_LEVEL ? 'Finalists advancing to the Final Showdown' : `Teams that keep playing after ${r.name}`}
                         value={keep ?? ''} disabled={r.level === QUALIFY_LEVEL ? s.event.qualificationFrozen : locked(r)}
                         onChange={(e) => (r.level === QUALIFY_LEVEL ? setSet({ ...set, finalists: e.target.value === '' ? NaN : Number(e.target.value) }) : setKeep(r.level, e.target.value))}
@@ -628,7 +779,7 @@ function EventTab({ s, act, confirm }: { s: AdminState; act: <T>(fn: () => Promi
         <h2 id="ev-h" className="text-xl font-black">Event settings</h2>
         <div><label className="lbl" htmlFor="ev-name">Event name</label><input id="ev-name" className="field" value={name} onChange={(e) => setName(e.target.value)} required minLength={2} maxLength={60} /></div>
         <div><label className="lbl" htmlFor="ev-pin">Room PIN (6 digits{early ? '' : ', locked after play begins'})</label><input id="ev-pin" className="field mono" pattern="\d{6}" maxLength={6} disabled={!early} value={pin} onChange={(e) => setPin(e.target.value)} /></div>
-        <NumField id="ev-max" label="Team capacity (max 20)" value={set.maxTeams} min={1} max={20} disabled={!early} onChange={(n) => setSet({ ...set, maxTeams: n })} />
+        <NumField id="ev-max" label={`Team capacity (max ${MAX_TEAMS})`} value={set.maxTeams} min={1} max={MAX_TEAMS} disabled={!early} onChange={(n) => setSet({ ...set, maxTeams: n })} />
         <Advancement s={s} set={set} setSet={setSet} />
         <label className="flex items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={set.autoApprove} disabled={!early} onChange={(e) => setSet({ ...set, autoApprove: e.target.checked })} /> Auto-approve new teams</label>
         <label className="flex items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={set.liveScores} onChange={(e) => setSet({ ...set, liveScores: e.target.checked })} /> Show live scores during rounds (otherwise revealed when each round ends)</label>

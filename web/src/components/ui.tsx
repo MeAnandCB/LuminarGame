@@ -148,6 +148,15 @@ export function Vitals({ row }: { row: LeaderboardRow }) {
 export const playingRows = (rows: LeaderboardRow[], round: { level: number; kind: RoundKind }): LeaderboardRow[] =>
   rows.filter((r) => (r.outAfter === null || round.level <= r.outAfter) && (round.kind !== 'showdown' || r.qualified !== false));
 
+/** Rows a projector board shows at once: what the 1080p layout is tuned and tested for. Longer fields show the top of the table. */
+export const PROJECTOR_ROWS = 20;
+
+/** Footer under a projector board that was cut to PROJECTOR_ROWS. */
+export function MoreTeams({ total, shown = PROJECTOR_ROWS }: { total: number; shown?: number }) {
+  if (total <= shown) return null;
+  return <p className="mt-[0.4vw] text-[0.8em] text-muted" data-testid="more-teams">+ {total - shown} more teams · every team can see its own rank on its phone</p>;
+}
+
 /** Ids of teams to flag as offline in every Leaderboard below (the projector provides it; phones leave it empty). */
 export const OfflineTeamsContext = createContext<ReadonlySet<number>>(new Set());
 

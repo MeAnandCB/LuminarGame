@@ -125,6 +125,20 @@ describe('round cut-offs', () => {
     expect([cell('Team 1'), cell('Team 3'), cell('Team 6')]).toEqual(['1', '2', '']);
   });
 
+  it('cuts a field larger than 20 teams', async () => {
+    b = await boot();
+    const { admin, teams } = await setupEvent(b, { teams: 30, settings: { maxTeams: 30, advance: [24, null, null], finalists: 10 } });
+    await admin.post('/api/admin/registration/confirm');
+    await admin.post('/api/admin/round/prepare');
+    await admin.post('/api/admin/round/start');
+    await playLive(admin, teams, rising, 1);
+    const s = await adminState(admin);
+    expect(s.leaderboard.filter((r) => r.outAfter === 1)).toHaveLength(6);
+    expect(s.leaderboard.filter((r) => r.outAfter === null)).toHaveLength(24);
+    expect(s.leaderboard.slice(24).every((r) => r.outAfter === 1)).toBe(true); // the six cut teams are the bottom six
+    expect((await pub()).cutoff).toEqual({ afterLevel: 1, kept: 24, out: 6 });
+  });
+
   it('rejects a plan where a later cut keeps more teams than an earlier one', async () => {
     b = await boot();
     const { admin } = await setupEvent(b, { teams: 0 });
@@ -137,7 +151,7 @@ describe('round cut-offs', () => {
     // malformed input never reaches the engine
     expect((await admin.patch('/api/admin/event', { settings: { advance: [5, 5] } })).status).toBe(400);
     expect((await admin.patch('/api/admin/event', { settings: { advance: [0, null, null] } })).status).toBe(400);
-    expect((await admin.patch('/api/admin/event', { settings: { advance: [21, null, null] } })).status).toBe(400);
+    expect((await admin.patch('/api/admin/event', { settings: { advance: [61, null, null] } })).status).toBe(400);
   });
 
   it('upgrades an event saved before cut-offs existed', async () => {
