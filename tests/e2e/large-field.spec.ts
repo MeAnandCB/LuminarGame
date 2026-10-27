@@ -82,8 +82,7 @@ test('a 60-team room: the host raises the capacity and the projector still fits 
   await api.post('/event/complete');
   await expect(d.getByText('Final standings')).toBeVisible();
   await d.waitForTimeout(4000);
-  // The podium page is taller than a 1080p screen even with 20 teams, so only its width, the row cap and accessibility are checked here.
-  await noHorizontalOverflow(d);
+  await fits(d, 'podium and final standings');
   await expect(d.locator('tbody tr')).toHaveCount(20);
   await expect(d.getByTestId('more-teams')).toBeVisible();
   await axe(d, 'final standings with 60 teams');

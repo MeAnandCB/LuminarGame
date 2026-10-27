@@ -41,12 +41,25 @@ const adminRound = async (admin: Client) => {
 };
 
 describe('Level 4 - Reel Rush (live)', () => {
+  it('keeps the per-team gains off the projector while the host hides live scores', async () => {
+    b = await boot();
+    const { teams } = await reelRush(2, { liveScores: false });
+    await teams[0]!.answer(correct(4, 0));
+    b.clock.advance(20_001);
+    tick();
+    const live = (await pub()).live;
+    expect(live.phase).toBe('reveal');
+    expect(live.reveal.gains).toEqual([]);
+    expect(live.lockedTeamIds).toEqual([teams[0]!.state.team.id]); // who answered is not a score
+  });
+
   it('opens question 1 for everyone at once; answers are locked in silently and scored only at the reveal', async () => {
     b = await boot();
     const { admin, teams } = await reelRush(3);
+    const ids = teams.map((t) => t.state.team.id);
     const p = await pub();
     expect(p.round).toMatchObject({ kind: 'lightning', status: 'running' });
-    expect(p.live).toMatchObject({ phase: 'open', index: 0, total: 12, answered: 0, eligible: 3 });
+    expect(p.live).toMatchObject({ phase: 'open', index: 0, total: 12, answered: 0, eligible: 3, lockedTeamIds: [] });
     expect(p.live.options).toHaveLength(4);
     expect(p.live.options.every((o: { correct?: boolean; count?: number }) => o.correct === undefined && o.count === undefined)).toBe(true);
     expect(p.live.reveal).toBeNull();
@@ -58,6 +71,8 @@ describe('Level 4 - Reel Rush (live)', () => {
     expect(second.json.outcome).toBe('locked');
     expect((await teams[0]!.me()).score.total).toBe(0); // nothing is scored during the open phase
     expect((await pub()).live.answered).toBe(2);
+    // the projector may show WHO has locked in (never which answer), so the room can see who is still thinking
+    expect((await pub()).live.lockedTeamIds.toSorted()).toEqual([ids[0], ids[1]].toSorted());
     expect((await teams[0]!.me()).live).toMatchObject({ locked: true, result: null });
 
     // time runs out -> reveal
@@ -68,6 +83,9 @@ describe('Level 4 - Reel Rush (live)', () => {
     expect(rev.reveal).toMatchObject({ correctText: 'Sun Microsystems', answered: 2, correctCount: 1, voided: false });
     expect(rev.reveal.fastest).toMatchObject({ name: 'Team 1', bonus: 50 });
     expect(rev.reveal.options.find((o: { id: string }) => o.id === 'c')).toMatchObject({ count: 1, correct: true });
+    // what each team earned on this question, for the scoreboard's "+250" chips
+    expect(rev.reveal.gains).toContainEqual({ teamId: ids[0], points: 250 });
+    expect(rev.reveal.gains.find((g: { teamId: number }) => g.teamId === ids[2])).toBeUndefined();
     // base 100 + full speed bonus 100 (answered instantly) + fastest finger 50
     expect((await teams[0]!.me()).score.total).toBe(250);
     expect((await teams[1]!.me()).score.total).toBe(0);

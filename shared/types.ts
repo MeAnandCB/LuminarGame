@@ -155,6 +155,8 @@ export interface LiveReveal {
   fact: string | null;
   /** Bingo: teams that completed a new line (or the whole card) on this call. */
   bingos: { name: string; lines: number; blackout: boolean }[];
+  /** Points each team earned or lost on this question (bonuses, penalties and steals included). Empty while scores are hidden. */
+  gains: { teamId: number; points: number }[];
 }
 
 /** Bingo master board shown on the projector: which tiles have been called so far. */
@@ -181,6 +183,8 @@ export interface LivePublic {
   bingo: BingoPublic | null;
   answered: number;
   eligible: number;
+  /** Teams that have locked in an answer to this question (never which answer), so the room can see who is still thinking. */
+  lockedTeamIds: number[];
   /** Server epoch ms when the phase ends; null while paused. */
   phaseEndsAt: number | null;
   phaseRemainingMs: number;

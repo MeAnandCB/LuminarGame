@@ -103,6 +103,12 @@ export async function noHorizontalOverflow(page: Page) {
   expect(o.sw, `scrollWidth ${o.sw} > clientWidth ${o.cw}; wide elements: ${o.wide.join(' | ')}`).toBeLessThanOrEqual(o.cw);
 }
 
+/** The projector never scrolls: the page is no taller than the screen. */
+export async function fitsProjector(page: Page, label: string) {
+  const h = await page.evaluate(() => ({ sh: document.documentElement.scrollHeight, ch: document.documentElement.clientHeight }));
+  expect(h.sh, `${label}: the projector page scrolls vertically`).toBeLessThanOrEqual(h.ch + 2);
+}
+
 /** A question on a phone must be answerable without scrolling: the page is no taller than the window and Lock in is on screen. */
 export async function fitsOneScreen(page: Page) {
   const m = await page.evaluate(() => {

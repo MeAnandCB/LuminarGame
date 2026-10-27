@@ -85,6 +85,9 @@ export function publicState(ctx: Ctx): PublicState {
   const rounds = ctx.rounds(ev.id);
   const lastEnded = rounds.filter((r) => r.status === 'ended').length;
   const showQual = qualificationVisible(ctx, ev) && (ev.state === 'QUALIFICATION' || ev.state === 'EVENT_COMPLETED' || ev.qualification_frozen === 1 || ev.state === 'ROUND_READY');
+  let live = round ? livePublic(ctx, ev, round) : null;
+  // Per-team point gains would give away the hidden scores, so the room only sees them when it may see the scores.
+  if (hidden && live?.reveal) live = { ...live, reveal: { ...live.reveal, gains: [] } };
   return {
     serverNow: now,
     event: { name: ev.name, pin: ev.pin, state: ev.state, joinUrl: ctx.joinUrlFor(ev.pin) },
@@ -99,7 +102,7 @@ export function publicState(ctx: Ctx): PublicState {
     cutoff: cutoffSummary(ctx, ev, round),
     podium: ev.state === 'EVENT_COMPLETED' ? rows.slice(0, 3) : null,
     reveal: reveal(ctx, ev),
-    live: round ? livePublic(ctx, ev, round) : null,
+    live,
   };
 }
 

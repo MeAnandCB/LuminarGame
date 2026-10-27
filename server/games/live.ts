@@ -355,7 +355,7 @@ export function livePublic(ctx: Ctx, ev: EventRow, round: RoundRow): LivePublic 
   const remainingMs = Math.max(0, round.live_clock_start + phaseMs(cfg, phase) - clock);
   const running = round.status === 'running';
   const standing = alive(ctx, round).length;
-  const subs = ctx.db.all<{ normalized: string; outcome: string }>("SELECT normalized, outcome FROM answer_submissions WHERE challenge_id = ? AND outcome IN ('correct','incorrect')", ch.id);
+  const subs = ctx.db.all<{ team_id: number; normalized: string; outcome: string }>("SELECT team_id, normalized, outcome FROM answer_submissions WHERE challenge_id = ? AND outcome IN ('correct','incorrect')", ch.id);
   const opts = parse<{ id: string; text: string; icon?: string }[]>(ch.options) ?? [];
   const isBingo = round.kind === 'bingo';
 
@@ -377,6 +377,7 @@ export function livePublic(ctx: Ctx, ev: EventRow, round: RoundRow): LivePublic 
       voided: log?.status === 'voided',
       fact: round.kind === 'faces' ? ch.hint : null,
       bingos: sum.bingos ?? [],
+      gains: ctx.db.all<{ team_id: number; t: number }>('SELECT team_id, SUM(points) t FROM score_ledger WHERE challenge_id = ? GROUP BY team_id', ch.id).map((g) => ({ teamId: g.team_id, points: g.t })),
     };
   }
   let bingo: BingoPublic | null = null;
@@ -400,6 +401,7 @@ export function livePublic(ctx: Ctx, ev: EventRow, round: RoundRow): LivePublic 
     bingo,
     answered: subs.length,
     eligible: standing,
+    lockedTeamIds: subs.map((s) => s.team_id),
     phaseEndsAt: running ? now + remainingMs : null,
     phaseRemainingMs: remainingMs,
     phaseTotalMs: phaseMs(cfg, phase),

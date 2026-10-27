@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { LeaderboardRow, PublicState } from '../../../shared/types';
 import { fmtClock, remaining, useLive, useServerNow } from '../lib/realtime';
 import { useOfflineTeams } from '../lib/offlineTeams';
-import { ConnBadge, Leaderboard, MoreTeams, OfflineTeamsContext, PROJECTOR_ROWS, QrImage, Spinner, playingRows } from '../components/ui';
+import { ConnBadge, OfflineTeamsContext, QrImage, Spinner, playingRows } from '../components/ui';
 import { LiveView } from './display/Live';
+import { Scoreboard } from './display/Scoreboard';
 import { BilingualRules } from '../components/Rules';
 import { Backdrop, Emblem, FINALE_LEVEL, LEVELS, LevelIntro, skinOf, themeFor } from '../components/Backdrop';
 
@@ -36,24 +37,25 @@ export function DisplayApp() {
     <OfflineTeamsContext.Provider value={offlineIds}>
     <Backdrop theme={theme} />
     <LevelIntro level={inRound ? level : undefined} reset={st === 'SETUP' || st === 'REGISTRATION_OPEN' || st === 'LOBBY' || !st} />
-    <main data-level={skinOf(level)} className="stage flex min-h-screen flex-col gap-[1.2vw] p-[1.6vw] text-[clamp(14px,1.45vw,30px)]">
-      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <div className="flex items-center gap-3">
-          <span aria-hidden="true" className="logo-b grid h-[3.2vw] w-[3.2vw] min-h-10 min-w-10 place-items-center rounded-xl bg-panel2 text-[1.8vw] font-black text-neon">B</span>
-          <h1 className="text-[clamp(1.1rem,2.3vw,2.8rem)] font-black tracking-wide">{pub?.event?.name ?? 'BRAINBYTE ARENA'}</h1>
-        </div>
-        {offline.length > 0 && (
+    <main data-level={skinOf(level)} className="stage pj">
+      <header className="pj-head">
+        <span aria-hidden="true" className="logo-b pj-logo">B</span>
+        <h1 className="pj-title">{pub?.event?.name ?? 'BRAINBYTE ARENA'}</h1>
+        {inRound && level && LEVELS[level] && <span className="pj-level"><span aria-hidden="true">{LEVELS[level]!.icon}</span> Level {level} · {LEVELS[level]!.name}</span>}
+        {offline.length > 0 ? (
           // One line in the header's free middle: it can never push the page taller, however many teams are offline.
           <section aria-label="Offline teams" aria-live="assertive" data-testid="offline-strip" className="pulse flex min-w-0 flex-1 items-center gap-[0.8vw] overflow-hidden rounded-2xl border-2 border-bad bg-[#3b0a1c] px-[1.2vw] py-[0.35vw] text-[#ffd5dc]">
             <strong className="shrink-0 text-[1.1em]"><span aria-hidden="true">⚠ </span>OFFLINE</strong>
             <span className="truncate text-[1.1em] font-bold">{offlineLabel(offline.map((t) => t.name))}</span>
           </section>
+        ) : (
+          <span className="flex-1" />
         )}
-        <div className="flex items-center gap-4">
+        <div className="flex flex-none items-center gap-4">
           {pub?.event && pub.event.state !== 'SETUP' && (
-            <div className="text-right">
-              <div className="text-[0.55em] font-bold uppercase tracking-widest text-muted">Room PIN</div>
-              <div className="mono text-[1.6em] font-black leading-none tracking-[0.2em] text-neon">{pub.event.pin}</div>
+            <div className="pj-pin">
+              <small>Room PIN</small>
+              <b className="mono">{pub.event.pin}</b>
             </div>
           )}
           <ConnBadge status={live.status} />
@@ -124,7 +126,7 @@ function Slots({ pub }: { pub: PublicState }) {
 function Registration({ pub }: { pub: PublicState }) {
   const ev = pub.event!;
   return (
-    <div className="grid flex-1 grid-cols-1 items-center gap-[2vw] lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+    <div className="grid min-h-0 flex-1 grid-cols-1 items-center gap-[2vw] overflow-hidden lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
       <section className="panel flex flex-col items-center gap-[1vw] p-[2vw] text-center">
         <h2 className="text-[1.8em] font-black">Scan to join</h2>
         <div className="qr-frame"><QrImage text={ev.joinUrl} size={320} label={`QR code to join at ${ev.joinUrl}`} /></div>
@@ -143,7 +145,7 @@ function Registration({ pub }: { pub: PublicState }) {
 
 function Lobby({ pub }: { pub: PublicState }) {
   return (
-    <div className="flex flex-1 flex-col gap-[1.5vw]">
+    <div className="flex min-h-0 flex-1 flex-col gap-[1.5vw] overflow-hidden">
       <section className="panel p-[2vw] text-center">
         <h2 className="pulse text-[3em] font-black text-neon">Registration closed</h2>
         <p className="mt-2 text-[1.3em]">{pub.counts.teams} teams · {pub.counts.connected} connected · Level 1 starts soon<span className="float-dots" aria-hidden="true" /></p>
@@ -155,29 +157,10 @@ function Lobby({ pub }: { pub: PublicState }) {
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="panel px-[1vw] py-[0.5vw] text-center">
-      <div className="tnum text-[1.9em] font-black leading-none">{value}</div>
-      <div className="mt-1 text-[0.7em] font-bold uppercase tracking-widest text-muted">{label}</div>
+    <div className="panel pj-stat">
+      <b>{value}</b>
+      <small>{label}</small>
     </div>
-  );
-}
-
-function BoardColumns({ rows: all, pub, showProgress, dense }: { rows: LeaderboardRow[]; pub: PublicState; showProgress?: boolean; dense?: boolean }) {
-  const rows = all.slice(0, PROJECTOR_ROWS); // a bigger field would scroll the projector, so show the top of the table
-  const split = rows.length > 10;
-  const half = Math.ceil(rows.length / 2);
-  return (
-    <>
-      {split ? (
-        <div className="grid grid-cols-1 gap-[1vw] min-[1100px]:grid-cols-2">
-          <Leaderboard big={!dense} dense={dense} hideOffline rows={rows.slice(0, half)} hidden={pub.scoresHidden} showProgress={showProgress} />
-          <Leaderboard big={!dense} dense={dense} hideOffline rows={rows.slice(half)} hidden={pub.scoresHidden} showProgress={showProgress} provisional={pub.provisional} />
-        </div>
-      ) : (
-        <Leaderboard big={!dense} dense={dense} hideOffline rows={rows} hidden={pub.scoresHidden} showProgress={showProgress} provisional={pub.provisional} />
-      )}
-      <MoreTeams total={all.length} />
-    </>
   );
 }
 
@@ -193,15 +176,15 @@ function RoundView({ pub, now }: { pub: PublicState; now: number }) {
   if (ready) {
     // A game is about to start: the room reads the rules, in English and Malayalam, across the full width. The leaderboard returns with the first question.
     return (
-      <div className="flex flex-1 flex-col gap-[1.2vw]">
-        <section className="panel glow flex flex-wrap items-center justify-between gap-x-[2vw] gap-y-[0.6vw] p-[1vw]">
+      <div className="flex min-h-0 flex-1 flex-col gap-[1.2vw] overflow-hidden">
+        <section className="panel glow flex flex-none flex-wrap items-center justify-between gap-x-[2vw] gap-y-[0.6vw] p-[1vw]">
           <div>
             <p className="text-[0.8em] font-bold uppercase tracking-[0.25em] text-[var(--accent)]"><Emblem level={round.level} />Level {round.level}</p>
             {LEVELS[round.level] && <p className="text-[0.8em] italic text-muted">{LEVELS[round.level]!.tag}</p>}
             <h2 className="text-[1.7em] font-black leading-tight">{round.name.replace(/^Level \d - /, '')}</h2>
           </div>
           <div className="text-right">
-            <div role="timer" aria-label={`Time remaining ${fmtClock(left)}`} className="mono text-[clamp(2.25rem,4vw,5rem)] font-black leading-none text-[var(--accent)]">{fmtClock(round.durationMs)}</div>
+            <div role="timer" aria-label={`Time remaining ${fmtClock(left)}`} className="mono text-[calc(var(--u)*5)] font-black leading-none text-[var(--accent)]">{fmtClock(round.durationMs)}</div>
             <p className="text-[1.05em] font-semibold">Get ready – waiting for the host to start</p>
           </div>
         </section>
@@ -209,78 +192,84 @@ function RoundView({ pub, now }: { pub: PublicState; now: number }) {
       </div>
     );
   }
+  const clock = paused ? 'text-warn' : left < 30000 && state === 'ROUND_RUNNING' ? 'urgent text-bad' : 'text-[var(--accent)]';
   return (
-    <div className="grid flex-1 grid-cols-1 gap-[1.6vw] lg:grid-cols-[minmax(0,4fr)_minmax(0,7fr)]">
-      <section className="flex flex-col gap-[0.8vw]">
-        <div className="panel glow p-[1.6vw]">
-          <p className="text-[0.8em] font-bold uppercase tracking-[0.25em] text-[var(--accent)]"><Emblem level={round.level} />Level {round.level}</p>
-          {LEVELS[round.level] && <p className="text-[0.8em] italic text-muted">{LEVELS[round.level]!.tag}</p>}
-          <h2 className="text-[1.9em] font-black leading-tight">{round.name.replace(/^Level \d - /, '')}</h2>
-          <div role="timer" aria-label={`Time remaining ${fmtClock(left)}`} className={`mono my-[0.5vw] text-[clamp(3.5rem,7vw,9rem)] font-black leading-none ${paused ? 'text-warn' : left < 30000 && state === 'ROUND_RUNNING' ? 'urgent text-bad' : 'text-[var(--accent)]'}`}>
+    <div className="pj-body pj-cols pj-cols-wide">
+      <section className="pj-col">
+        <div className="panel glow pj-hero">
+          <p className="pj-q-meta"><span><Emblem level={round.level} /><b>Level {round.level}</b></span>{LEVELS[round.level] && <span className="italic normal-case tracking-normal">{LEVELS[round.level]!.tag}</span>}</p>
+          <h2 className="text-[1.7em] font-black leading-tight">{round.name.replace(/^Level \d - /, '')}</h2>
+          <div role="timer" aria-label={`Time remaining ${fmtClock(left)}`} className={`pj-hero-clock ${clock}`}>
             {ended ? '0:00' : fmtClock(left)}
           </div>
-          <p className="text-[1.05em] font-semibold">
+          <p className="text-[1.15em] font-semibold">
             {state === 'ROUND_RUNNING' && 'Round in progress'}
             {paused && '⏸ PAUSED by the host'}
             {ended && "🏁 Time's up – round complete"}
           </p>
         </div>
-        {ended && pub.cutoff ? (
-          // Replaces the instructions once the round is over, so the column keeps the height the projector was designed for.
-          <div className="panel pop border-ok p-[1.2vw]" role="status" data-testid="cutoff-banner">
-            <p className="text-[1.3em] font-black text-ok">✔ {pub.cutoff.kept} team{pub.cutoff.kept === 1 ? '' : 's'} move on to Level {pub.cutoff.afterLevel + 1}</p>
-            <p className="text-[0.9em] text-muted">{pub.cutoff.out} team{pub.cutoff.out === 1 ? ' is' : 's are'} out after this round.</p>
-          </div>
-        ) : (
-          <p className="panel p-[1vw] text-[0.8em] leading-snug text-muted">{round.instructions}</p>
-        )}
-        <div className="grid grid-cols-1 gap-[0.8vw] sm:grid-cols-3">
-          <Stat label="Teams online" value={`${playing.filter((r) => r.connected).length}/${playing.length}`} />
-          <Stat label="Answers in" value={pub.counts.submissions} />
-          <Stat label={`Finished all ${round.total} ${unit}`} value={pub.counts.finished} />
-        </div>
-        {pub.recent.length > 0 && (
-          <div className="panel p-[1vw]" aria-live="polite">
-            <h3 className="mb-1 text-[0.75em] font-bold uppercase tracking-widest text-muted">Recent scores</h3>
-            <ul className="space-y-1">
-              {pub.recent.slice(0, 3).map((c) => (
-                <li key={c.id} className="slide-in flex justify-between gap-3 text-[0.9em]">
-                  <span className="truncate">{c.teamName}</span>
-                  <span className={`tnum font-black ${c.points >= 0 ? 'text-ok' : 'text-bad'}`}>{c.points >= 0 ? '▲ +' : '▼ '}{c.points}</span>
-                </li>
-              ))}
-            </ul>
+        {!ended && (
+          <div className="pj-stats">
+            <Stat label="Teams online" value={`${playing.filter((r) => r.connected).length}/${playing.length}`} />
+            <Stat label="Answers in" value={pub.counts.submissions} />
+            <Stat label={`Finished all ${round.total} ${unit}`} value={pub.counts.finished} />
           </div>
         )}
-      </section>
-      <section className="flex flex-col gap-[1vw]">
-        <h2 className="text-[1.5em] font-black">{pub.provisional ? 'Live leaderboard' : ended ? 'Round standings' : 'Leaderboard'}</h2>
-        {pub.scoresHidden && <p className="rounded-lg border border-warn px-3 py-2 text-warn">Scores are hidden until the round ends.</p>}
-        <BoardColumns rows={ended && pub.cutoff ? pub.leaderboard : playing} pub={pub} showProgress={!ended} />
+        {ended && pub.cutoff && (
+          <div className="panel pop pj-pad border-ok" role="status" data-testid="cutoff-banner">
+            <p className="text-[1.5em] font-black text-ok">✔ {pub.cutoff.kept} team{pub.cutoff.kept === 1 ? '' : 's'} move on to Level {pub.cutoff.afterLevel + 1}</p>
+            <p className="text-[1em] text-muted">{pub.cutoff.out} team{pub.cutoff.out === 1 ? ' is' : 's are'} out after this round.</p>
+          </div>
+        )}
         {ended && pub.reveal && (
-          <div className="panel p-[1.2vw]">
-            <h3 className="mb-2 text-[1.1em] font-black text-[var(--accent)]">Answer key</h3>
-            <ol className="grid grid-cols-1 gap-x-6 gap-y-1 text-[0.8em] sm:grid-cols-2">
+          <div className="panel pj-pad pj-fill">
+            <h3 className="mb-[0.4em] text-[1.2em] font-black text-[var(--accent)]">Answer key</h3>
+            <ol className="pj-key">
               {pub.reveal.map((r) => (
-                <li key={r.position} className="flex gap-2"><span className="text-muted">{r.position + 1}.</span><span className="truncate">{r.title}:</span><strong className="mono">{r.answer}</strong></li>
+                <li key={r.position}><span>{r.position + 1}.</span><span><small>{r.title}</small><strong>{r.answer}</strong></span></li>
               ))}
             </ol>
           </div>
         )}
+        {!ended && (
+          <div className="panel pj-pad pj-fill">
+            {pub.recent.length > 0 && (
+              <div aria-live="polite" className="mb-[0.6em]">
+                <h3 className="mb-[0.2em] text-[0.75em] font-bold uppercase tracking-widest text-muted">Recent scores</h3>
+                <ul className="space-y-[0.15em]">
+                  {pub.recent.slice(0, 3).map((c) => (
+                    <li key={c.id} className="slide-in flex justify-between gap-3 text-[1em]">
+                      <span className="truncate">{c.teamName}</span>
+                      <span className={`tnum font-black ${c.points >= 0 ? 'text-ok' : 'text-bad'}`}>{c.points >= 0 ? '▲ +' : '▼ '}{c.points}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <p className="text-[0.8em] leading-snug text-muted">{round.instructions}</p>
+          </div>
+        )}
       </section>
+      <Scoreboard
+        rows={ended && pub.cutoff ? pub.leaderboard : playing}
+        title={pub.provisional ? 'Live leaderboard' : ended ? 'Round standings' : 'Leaderboard'}
+        hidden={pub.scoresHidden}
+        provisional={pub.provisional}
+        note={{ kind: ended ? 'status' : 'progress' }}
+      />
     </div>
   );
 }
 
 function Qualification({ pub }: { pub: PublicState }) {
   return (
-    <div className="grid flex-1 grid-cols-1 gap-[2vw] lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
-      <section className="panel glow p-[2vw]" data-level="3">
-        <h2 className="text-[2.4em] font-black text-[var(--accent)]"><Emblem level={FINALE_LEVEL} />Finalists</h2>
+    <div className="pj-body pj-cols pj-cols-wide">
+      <section className="panel glow pj-pad min-h-0 overflow-hidden" data-level="3">
+        <h2 className="text-[2em] font-black text-[var(--accent)]"><Emblem level={FINALE_LEVEL} />Finalists</h2>
         <p className="text-muted">These teams advance to the Final Showdown</p>
-        <ol className="mt-[1vw] space-y-[0.7vw]">
+        <ol className="mt-[0.6em] space-y-[0.4em]">
           {pub.finalists.map((f, i) => (
-            <li key={f.teamId} className="joined flex items-center gap-4 rounded-xl border border-ok/60 bg-[#052e16] px-[1.2vw] py-[0.8vw] text-[1.5em] font-black" style={{ animationDelay: `${i * 350}ms` }}>
+            <li key={f.teamId} className="joined flex items-center gap-4 rounded-xl border border-ok/60 bg-[#052e16] px-[1.2vw] py-[0.5em] text-[1.4em] font-black" style={{ animationDelay: `${i * 350}ms` }}>
               <span className="tnum text-ok">{i + 1}</span>
               <span className="truncate">{f.name}</span>
               <span aria-hidden="true" className="ml-auto">✔</span>
@@ -288,10 +277,7 @@ function Qualification({ pub }: { pub: PublicState }) {
           ))}
         </ol>
       </section>
-      <section>
-        <h2 className="mb-2 text-[1.5em] font-black">Standings after Level {Math.max(1, (pub.round?.level ?? 4))}</h2>
-        <BoardColumns rows={pub.leaderboard} pub={pub} />
-      </section>
+      <Scoreboard rows={pub.leaderboard} title={`Standings after Level ${Math.max(1, pub.round?.level ?? 4)}`} hidden={pub.scoresHidden} note={{ kind: 'status' }} />
     </div>
   );
 }
@@ -299,34 +285,32 @@ function Qualification({ pub }: { pub: PublicState }) {
 function Champions({ pub }: { pub: PublicState }) {
   const podium = pub.podium ?? [];
   const order = [podium[1], podium[0], podium[2]].filter(Boolean) as LeaderboardRow[];
-  const height: Record<number, string> = { 1: 'h-[11vw]', 2: 'h-[8vw]', 3: 'h-[6vw]' };
   // 3rd place rises first, then 2nd, then 1st; the champion name lands last.
   const delay: Record<number, string> = { 3: '0.4s', 2: '1.4s', 1: '2.4s' };
   const medal = ['🥇', '🥈', '🥉'];
   return (
-    <div className="flex flex-1 flex-col gap-[1.5vw]" data-level="3">
-      <section className="text-center">
-        <p className="text-[0.9em] font-bold uppercase tracking-[0.4em] text-muted"><span className="crown" aria-hidden="true">👑</span> Champion</p>
-        <h2 className="champ-reveal shimmer-gold mx-auto mt-1 inline-block px-8 py-2 text-[clamp(2rem,4.5vw,5.5rem)] font-black leading-tight">{podium[0]?.name ?? '—'}</h2>
+    <div className="pj-body pj-cols pj-cols-wide" data-level="3">
+      <section className="pj-col">
+        <div className="flex-none text-center">
+          <p className="text-[0.9em] font-bold uppercase tracking-[0.4em] text-muted"><span className="crown" aria-hidden="true">👑</span> Champion</p>
+          <h2 className="champ-reveal shimmer-gold mx-auto mt-1 inline-block max-w-full px-[0.5em] py-[0.1em] text-[calc(var(--u)*4.4)] font-black leading-tight">{podium[0]?.name ?? '—'}</h2>
+        </div>
+        <ol className="pj-podium" aria-label="Podium">
+          {order.map((r) => (
+            <li key={r.teamId}>
+              <div className="podium-name mb-2 flex-none text-center" style={{ animationDelay: delay[r.rank] ?? '0s' }}>
+                <div className="text-[1.6em]" aria-hidden="true">{medal[r.rank - 1]}</div>
+                <div className="text-[1.3em] font-black"><span className="sr-only">Place {r.rank}: </span>{r.name}</div>
+                <div className="tnum text-[1.3em] font-bold text-neon">{r.total} pts</div>
+              </div>
+              <div className={`podium-rise pj-step ${r.rank === 1 ? 'bg-gradient-to-b from-amber-400/70 to-panel' : 'bg-gradient-to-b from-violet-strong/70 to-panel'}`} style={{ animationDelay: delay[r.rank] ?? '0s', '--h': `${{ 1: 34, 2: 25, 3: 18 }[r.rank] ?? 18}%` } as CSSProperties}>
+                <div className="pt-1 text-center text-[2.4em] font-black leading-none text-white/90">{r.rank}</div>
+              </div>
+            </li>
+          ))}
+        </ol>
       </section>
-      <ol className="mx-auto flex w-full max-w-6xl items-end justify-center gap-[1.5vw]" aria-label="Podium">
-        {order.map((r) => (
-          <li key={r.teamId} className="flex w-1/3 flex-col items-center">
-            <div className="podium-name mb-2 text-center" style={{ animationDelay: delay[r.rank] ?? '0s' }}>
-              <div className="text-[2em]" aria-hidden="true">{medal[r.rank - 1]}</div>
-              <div className="text-[1.4em] font-black"><span className="sr-only">Place {r.rank}: </span>{r.name}</div>
-              <div className="tnum text-[1.3em] font-bold text-neon">{r.total} pts</div>
-            </div>
-            <div className={`podium-rise w-full rounded-t-2xl border border-[var(--accent)] ${r.rank === 1 ? 'bg-gradient-to-b from-amber-400/70 to-panel' : 'bg-gradient-to-b from-violet-strong/70 to-panel'} ${height[r.rank]}`} style={{ animationDelay: delay[r.rank] ?? '0s' }}>
-              <div className="pt-1 text-center text-[2.4em] font-black leading-none text-white/90">{r.rank}</div>
-            </div>
-          </li>
-        ))}
-      </ol>
-      <section className="panel p-[1.2vw]">
-        <h3 className="mb-1 text-[1.1em] font-black">Final standings</h3>
-        <BoardColumns rows={pub.leaderboard} pub={pub} dense />
-      </section>
+      <Scoreboard rows={pub.leaderboard} title="Final standings" note={{ kind: 'none' }} />
     </div>
   );
 }

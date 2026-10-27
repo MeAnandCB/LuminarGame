@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { ADMIN, AdminApi, PROJECTOR, answerFor, playLiveRound, registerTeam, skipIntroRounds, solveQuiz } from './helpers';
+import { ADMIN, AdminApi, PROJECTOR, answerFor, fitsProjector, playLiveRound, registerTeam, skipIntroRounds, solveQuiz } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -173,6 +173,7 @@ test('complete event: admin, two phones, projector, 5 levels, podium, CSV', asyn
   await expect(a.page.getByText('finished').first()).toBeVisible();
   await admin.getByRole('button', { name: /Reveal answers/ }).click();
   await expect(display.getByText('Answer key')).toBeVisible();
+  await fitsProjector(display, 'round standings with the answer key');
 
   // ---- 6. Level 4: Reel Rush (live) ----------------------------------------------
   await admin.getByTestId('act-round.prepare').click();
@@ -190,6 +191,10 @@ test('complete event: admin, two phones, projector, 5 levels, podium, CSV', asyn
   await expect(a.page.getByText(/Answer locked in/)).toBeVisible();
   // locked-in answers do not reveal correctness or move the score yet
   await expect(a.page.getByText('Correct!')).toHaveCount(0);
+  // the room sees WHO has locked in (not which answer) while the others are still thinking
+  await expect(display.getByRole('row', { name: /Alpha Wolves/ })).toContainText('Locked in');
+  await expect(display.getByRole('row', { name: /Beta Hawks/ })).toContainText('answering');
+  await fitsProjector(display, 'reel rush question');
   await b.page.getByRole('checkbox', { name: /Double Down/ }).check();
   await b.page.getByRole('radio', { name: /Intel/ }).click();
   await b.page.getByRole('button', { name: /Lock in with Double Down/ }).click();
@@ -203,6 +208,9 @@ test('complete event: admin, two phones, projector, 5 levels, podium, CSV', asyn
   await expect(b.page.getByText('Double Down failed')).toBeVisible();
   await expect(display.getByRole('status').filter({ hasText: 'Correct answer' })).toContainText('Sun Microsystems');
   await expect(display.getByText(/Fastest finger: Alpha Wolves/)).toBeVisible();
+  // each team's row shows what it scored on this question
+  await expect(display.getByRole('row', { name: /Alpha Wolves/ })).toContainText(/\+\d+/);
+  await fitsProjector(display, 'reel rush reveal');
 
   // host skips question 2 (void): nobody scores, question 3 opens
   await admin.getByTestId('act-live.advance').click(); // reveal -> question 2
@@ -230,6 +238,7 @@ test('complete event: admin, two phones, projector, 5 levels, podium, CSV', asyn
   await expect(b.page.getByText('You qualified for the Final Showdown')).toBeVisible();
   await expect(display.getByRole('heading', { name: 'Finalists' })).toBeVisible();
   await expect(display.getByRole('listitem').filter({ hasText: 'Alpha Wolves' })).toBeVisible();
+  await fitsProjector(display, 'qualification');
 
   // ---- 8. Level 5: Final Showdown ----------------------------------------------------------
   await admin.getByTestId('act-round.prepare').click();
@@ -261,6 +270,8 @@ test('complete event: admin, two phones, projector, 5 levels, podium, CSV', asyn
   // ---- 9. podium + champion screens ------------------------------------------------------
   await expect(display.getByRole('heading', { name: 'Alpha Wolves' })).toBeVisible();
   await expect(display.getByRole('list', { name: 'Podium' })).toContainText('Beta Hawks');
+  await display.waitForTimeout(4000); // let the podium finish rising
+  await fitsProjector(display, 'podium');
   await expect(a.page.getByText('Champion', { exact: true })).toBeVisible();
   await expect(b.page.getByText('Runner-up')).toBeVisible();
 
